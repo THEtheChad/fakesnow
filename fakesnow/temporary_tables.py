@@ -55,8 +55,9 @@ class TemporaryTables:
                 return expression
             name = expression.table if isinstance(expression, exp.Column) else expression.name
             if self.oid(expression.catalog or current_database, expression.db, name) is not None:
-                expression.set("catalog", exp.to_identifier("temp"))
-                expression.set("db", exp.to_identifier("main"))
+                # Preserve DuckDB's internal names when a later Snowflake optimizer normalizes identifiers.
+                expression.set("catalog", exp.to_identifier("temp", quoted=True))
+                expression.set("db", exp.to_identifier("main", quoted=True))
         return expression
 
     def record(self, expression: Expr) -> None:

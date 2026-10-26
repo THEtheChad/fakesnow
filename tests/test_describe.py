@@ -118,6 +118,44 @@ def test_describe_timestamp_ltz_temporary_shadows_permanent(cur: snowflake.conne
     assert [(d.name, d.type_code) for d in cur.description] == [("TS", 6)]
 
 
+@pytest.mark.parametrize("current_schema", ["schema1", "other"])
+@pytest.mark.parametrize("table", ["schema1.example", "db1.schema1.example"])
+@pytest.mark.parametrize(
+    "permanent_type,temporary_type,expected",
+    [("timestamp_tz", "timestamp_ltz", 7), ("timestamp_ltz", "timestamp_tz", 6)],
+)
+def test_describe_timestamp_ltz_permanent_in_another_schema(
+    cur: snowflake.connector.cursor.SnowflakeCursor,
+    current_schema: str,
+    table: str,
+    permanent_type: str,
+    temporary_type: str,
+    expected: int,
+):
+    cur.execute(f"create table example (ts {permanent_type})")
+    cur.execute("create schema other")
+    cur.execute(f"create temporary table other.example (ts {temporary_type})")
+    cur.execute(f"use schema {current_schema}")
+    cur.execute(f"select ts from {table}")
+
+    assert [(d.name, d.type_code) for d in cur.description] == [("TS", expected)]
+
+
+def test_describe_timestamp_ltz_cte_shadows_temporary(cur: snowflake.connector.cursor.SnowflakeCursor):
+    cur.execute("create temporary table example (ts timestamp_ltz)")
+    cur.execute("with example as (select null::timestamp_tz as ts) select * from example")
+
+    assert [(d.name, d.type_code) for d in cur.description] == [("TS", 7)]
+
+
+@pytest.mark.parametrize("table", ['"MiXeD"', 'db1.schema1."MiXeD"'])
+def test_describe_timestamp_ltz_temporary_quoted(cur: snowflake.connector.cursor.SnowflakeCursor, table: str):
+    cur.execute('create temporary table "MiXeD" ("lColumn" timestamp_ltz)')
+    cur.execute(f'select "lColumn" from {table}')
+
+    assert [(d.name, d.type_code) for d in cur.description] == [("lColumn", 6)]
+
+
 def test_describe_table_timestamp_ltz(cur: snowflake.connector.cursor.SnowflakeCursor):
     cur.execute("create table example (l timestamp_ltz, z timestamp_tz)")
 

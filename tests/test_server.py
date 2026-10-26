@@ -971,6 +971,24 @@ def test_server_timestamp_ltz_description(scur: snowflake.connector.cursor.Snowf
     assert [(d.name, d.type_code) for d in scur.description] == [("L", 6), ("Z", 7)]
 
 
+@pytest.mark.parametrize("qualified", [False, True])
+def test_server_temporary_timestamp_ltz_description_isolation(server: dict, qualified: bool) -> None:
+    shared = server | {"session_parameters": {}}
+    database = f"TEMP_LTZ_ISOLATION_{uuid.uuid4().hex.upper()}"
+    with (
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn1,
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn2,
+        conn1.cursor() as cur1,
+        conn2.cursor() as cur2,
+    ):
+        cur1.execute("create temporary table example (ts timestamp_ltz)")
+        cur2.execute("create temporary table example (ts timestamp_tz)")
+        table = f"{database}.S.example" if qualified else "example"
+        for cur, expected in [(cur1, 6), (cur2, 7)]:
+            cur.execute(f"select ts from {table}")
+            assert [(d.name, d.type_code) for d in cur.description] == [("TS", expected)]
+
+
 def test_server_timestamp_ltz_value(scur: snowflake.connector.cursor.SnowflakeCursor) -> None:
     # the connector reads a timestamp_ltz in the session's TIMEZONE, it's the same instant in any zone
     scur.execute("select '2026-10-26 01:02:03+09:00'::timestamp_ltz as l")
