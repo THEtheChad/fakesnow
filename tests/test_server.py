@@ -932,3 +932,24 @@ def test_server_runtime_failure_autocommit_keeps_commit_error(server: dict) -> N
         with pytest.raises(snowflake.connector.errors.ProgrammingError, match="transaction was aborted"):
             conn.commit()
         conn.rollback()
+
+
+def test_server_temporary_table_session_isolation(server: dict) -> None:
+    # Override the isolated fixture: both sessions must share the server's DuckDB instance.
+    shared = server | {"session_parameters": {}}
+    database = f"TEMP_ISOLATION_{uuid.uuid4().hex.upper()}"
+    with (
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn1,
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn2,
+        conn1.cursor() as cur1,
+        conn2.cursor() as cur2,
+    ):
+        cur1.execute(f"create table {database}.S.T as select 0 as x")
+        cur1.execute(f"create temporary table {database}.S.T as select 1 as x")
+        cur2.execute(f"select * from {database}.S.T")
+        assert cur2.fetchall() == [(0,)]
+        cur2.execute(f"create temporary table {database}.S.T as select 2 as x")
+        cur1.execute(f"select * from {database}.S.T")
+        assert cur1.fetchall() == [(1,)]
+        cur2.execute(f"select * from {database}.S.T")
+        assert cur2.fetchall() == [(2,)]

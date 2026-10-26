@@ -616,6 +616,134 @@ def test_tags_noop(cur: snowflake.connector.cursor.SnowflakeCursor):
     cur.execute("DROP TAG cost_center")
 
 
+@pytest.mark.parametrize("qualifier", ["db1.schema1.", "schema1."])
+def test_temporary_table_create_qualified(cur: snowflake.connector.cursor.SnowflakeCursor, qualifier: str) -> None:
+    # dbt's unit tests create their results this way
+    cur.execute(f'create or replace temporary table {qualifier}"my_model__dbt_tmp" as (select 1 as x)')
+    assert cur.execute(f'select * from {qualifier}"my_model__dbt_tmp"').fetchall() == [(1,)]
+
+
+def test_temporary_table_create_qualified_read_unqualified(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create temporary table db1.schema1.temp1 as select 1 as x")
+    assert cur.execute("select * from temp1").fetchall() == [(1,)]
+
+
+@pytest.mark.parametrize("qualifier", ["db1.schema1.", "schema1."])
+def test_temporary_table_insert_qualified(cur: snowflake.connector.cursor.SnowflakeCursor, qualifier: str) -> None:
+    cur.execute("create temporary table temp1 (x int)")
+    cur.execute(f"insert into {qualifier}temp1 values (2)")
+    assert cur.execute("select * from temp1").fetchall() == [(2,)]
+
+
+@pytest.mark.parametrize("qualifier", ["db1.schema1.", "schema1."])
+def test_temporary_table_drop_qualified(cur: snowflake.connector.cursor.SnowflakeCursor, qualifier: str) -> None:
+    cur.execute("create temporary table temp1 (x int)")
+    cur.execute(f"drop table {qualifier}temp1")
+    with pytest.raises(snowflake.connector.errors.ProgrammingError):
+        cur.execute("select * from temp1")
+
+
+def test_temporary_table_qualified_shadows_permanent_table(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    # a temporary table takes precedence over a table with the same name
+    # see https://docs.snowflake.com/en/user-guide/tables-temp-transient
+    cur.execute("create table table1 as select 'permanent' as x")
+    cur.execute("create temporary table table1 as select 'temporary' as x")
+    assert cur.execute("select * from db1.schema1.table1").fetchall() == [("temporary",)]
+
+
+def test_temporary_table_qualified_other_schema(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    # a temporary table belongs to the schema it was created in
+    cur.execute("create schema db1.schema2")
+    cur.execute("create table db1.schema2.table1 as select 'permanent' as x")
+    cur.execute("use schema db1.schema1")
+    cur.execute("create temporary table table1 as select 'temporary' as x")
+    assert cur.execute("select * from db1.schema2.table1").fetchall() == [("permanent",)]
+
+
+@pytest.mark.parametrize("column", ["schema1.temp1.x", "db1.schema1.temp1.x"])
+def test_temporary_table_qualified_column(cur: snowflake.connector.cursor.SnowflakeCursor, column: str) -> None:
+    cur.execute("create temporary table temp1 as select 1 as x")
+    assert cur.execute(f"select {column} from db1.schema1.temp1").fetchall() == [(1,)]
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "select t.x from db1.schema1.temp1 t",
+        "with temp1 as (select 2 as x) select * from db1.schema1.temp1",
+        "select t.x from (select * from db1.schema1.temp1) t",
+        "select t.x from db1.schema1.temp1 t join db1.schema1.temp1 u on t.x = u.x",
+    ],
+    ids=["alias", "cte", "subquery", "join"],
+)
+def test_temporary_table_qualified_query(cur: snowflake.connector.cursor.SnowflakeCursor, query: str) -> None:
+    cur.execute("create temporary table temp1 as select 1 as x")
+    assert cur.execute(query).fetchall() == [(1,)]
+
+
+def test_temporary_table_qualified_update(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create temporary table temp1 as select 1 as x")
+    cur.execute("update db1.schema1.temp1 set x = 2 where db1.schema1.temp1.x = 1")
+    assert cur.execute("select * from temp1").fetchall() == [(2,)]
+
+
+def test_temporary_table_qualified_delete(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create temporary table temp1 as select 1 as x")
+    cur.execute("delete from db1.schema1.temp1 where db1.schema1.temp1.x = 1")
+    assert cur.execute("select * from temp1").fetchall() == []
+
+
+def test_temporary_table_qualified_merge(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create temporary table temp1 as select 1 as x")
+    cur.execute("""
+        merge into db1.schema1.temp1 t using (select 1 as x) s on t.x = s.x
+        when matched then update set x = 2
+        when not matched then insert (x) values (s.x)
+    """)
+    assert cur.execute("select * from temp1").fetchall() == [(2,)]
+
+
+def test_temporary_table_qualified_drop_if_exists(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create temporary table temp1 as select 1 as x")
+    cur.execute("drop table if exists db1.schema1.temp1")
+    cur.execute("drop table if exists db1.schema1.temp1")
+    with pytest.raises(ProgrammingError):
+        cur.execute("select * from temp1")
+
+
+def test_temporary_table_qualified_replace(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create temporary table temp1 as select 1 as x")
+    cur.execute("create or replace temporary table db1.schema1.temp1 as select 2 as x")
+    assert cur.execute("select * from db1.schema1.temp1").fetchall() == [(2,)]
+
+
+def test_temporary_table_create_permanent_after_temporary(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create temporary table temp1 as select 1 as x")
+    cur.execute("create table db1.schema1.temp1 as select 2 as x")
+    cur.execute("drop table db1.schema1.temp1")
+    assert cur.execute("select * from db1.schema1.temp1").fetchall() == [(2,)]
+
+
+def test_temporary_table_quoted_qualifiers(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute('create schema "MixedSchema"')
+    cur.execute('create temporary table "DB1"."MixedSchema"."MixedTable" as select 1 as "MixedColumn"')
+    assert cur.execute('select "MixedTable"."MixedColumn" from "DB1"."MixedSchema"."MixedTable"').fetchall() == [(1,)]
+
+
+def test_temporary_table_missing_schema(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    with pytest.raises(ProgrammingError, match="does not exist") as excinfo:
+        cur.execute("create temporary table db1.no_such_schema.temp1 (x int)")
+    assert excinfo.value.errno == 2003
+
+
+def test_temporary_table_does_not_capture_sequence(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create temporary table temp1 (x int)")
+    cur.execute("create sequence db1.schema1.temp1")
+    cur.execute("drop sequence if exists db1.schema1.temp1")
+    with pytest.raises(ProgrammingError):
+        cur.execute("select temp1.nextval")
+
+
 def test_to_date(cur: snowflake.connector.cursor.SnowflakeCursor):
     cur.execute(
         "SELECT to_date(to_timestamp(0)), to_date(cast(to_timestamp(0) as timestamp(9))), to_date('2024-01-26')"

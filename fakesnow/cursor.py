@@ -389,8 +389,15 @@ class FakeSnowflakeCursor:
         return names or None
 
     def _transform(self, expression: Expr, params: MutableParams | None) -> Expr:
-        expression = expression.transform(lambda e: transforms.identifier(e, params), copy=False).transform(
-            transforms.upper_case_unquoted_identifiers, copy=False
+        expression = (
+            expression.transform(lambda e: transforms.identifier(e, params), copy=False)
+            .transform(transforms.upper_case_unquoted_identifiers, copy=False)
+            .transform(
+                self._conn.temporary_tables.transform,
+                current_database=self._conn.database,
+                current_schema=self._conn.schema,
+                copy=False,
+            )
         )
         self.check_identifier_case(expression)
         return (
@@ -640,7 +647,7 @@ class FakeSnowflakeCursor:
         if isinstance(transformed, (exp.Commit, exp.Rollback)):
             self._conn._in_transaction = False
 
-        self._conn.table_stages.record_temporary_table(transformed, self._conn.database, self._conn.schema)
+        self._conn.temporary_tables.record(transformed)
 
         if set_database := transformed.args.get("set_database"):
             self._conn.database = set_database
