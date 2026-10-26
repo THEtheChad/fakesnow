@@ -493,7 +493,7 @@ class FakeSnowflakeCursor:
                     self._duck_conn,
                     self._conn.database,
                     self._conn.schema,
-                    self._conn.temporary_tables.location,
+                    self._conn.temporary_tables,
                 ),
                 copy=False,
             )
@@ -600,7 +600,7 @@ class FakeSnowflakeCursor:
             transformed,
             self._conn.database,
             self._conn.schema,
-            lambda table: self._conn.temporary_tables.location(table, self._conn.database, self._conn.schema),
+            self._conn.temporary_tables,
         )
         affected_count = None
         try:

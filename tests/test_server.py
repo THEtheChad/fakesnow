@@ -1,6 +1,7 @@
 # ruff: noqa: E501
 
 import datetime
+import json
 import os
 import tempfile
 import uuid
@@ -977,3 +978,49 @@ def test_server_temporary_table_keeps_permanent_varchar_length(server: dict) -> 
         cur2.execute("insert into example values ('abcde')")
         cur2.execute("select name from example")
         assert cur2.fetchall() == [("abcde",)]
+
+
+@pytest.mark.parametrize(
+    "ddl",
+    [
+        "create temporary table example (name varchar(10))",
+        "create or replace temporary table example (name varchar(10))",
+        "alter table example rename to renamed",
+        "drop table example",
+    ],
+)
+def test_server_temporary_table_varchar_length_isolation(server: dict, ddl: str) -> None:
+    # DDL on another session's same-named temporary table cannot change this session's limit.
+    shared = server | {"session_parameters": {}}
+    database = f"TEMP_LENGTH_ISOLATION_{uuid.uuid4().hex.upper()}"
+    with (
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn1,
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn2,
+        conn1.cursor() as cur1,
+        conn2.cursor() as cur2,
+    ):
+        if not ddl.startswith("create temporary"):
+            cur2.execute("create temporary table example (name varchar(10))")
+        cur1.execute("create temporary table example (name varchar(2))")
+        cur2.execute(ddl)
+        with pytest.raises(snowflake.connector.errors.ProgrammingError) as excinfo:
+            cur1.execute("insert into example values ('abc')")
+        assert (excinfo.value.errno, excinfo.value.sqlstate) == (100078, "22000")
+
+
+def test_server_temporary_table_column_type_isolation(server: dict) -> None:
+    shared = server | {"session_parameters": {}}
+    database = f"TEMP_TYPE_ISOLATION_{uuid.uuid4().hex.upper()}"
+    with (
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn1,
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn2,
+        conn1.cursor() as cur1,
+        conn2.cursor() as cur2,
+    ):
+        cur1.execute("create temporary table example (value array)")
+        cur2.execute("create temporary table example (value object)")
+        for cur, expected in [(cur1, "ARRAY"), (cur2, "OBJECT")]:
+            cur.execute(f"show columns in table {database}.S.example")
+            rows = cur.fetchall()
+            assert len(rows) == 1
+            assert json.loads(rows[0][3])["type"] == expected

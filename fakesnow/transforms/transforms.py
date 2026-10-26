@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from pathlib import Path
 from string import Template
 from typing import cast
@@ -13,6 +12,7 @@ from sqlglot import Expr, exp
 
 from fakesnow import info_schema
 from fakesnow.params import MutableParams, pop_qmark_param
+from fakesnow.temporary_tables import TemporaryTables
 from fakesnow.variables import Variables
 
 SUCCESS_NOP = sqlglot.parse_one("SELECT 'Statement executed successfully.' as status")
@@ -593,7 +593,7 @@ def enforce_text_length(
     duck_conn: DuckDBPyConnection,
     current_database: str | None,
     current_schema: str | None,
-    location: Callable[[exp.Table, str | None, str | None], tuple[str | None, str | None]] | None = None,
+    temporary_tables: TemporaryTables,
 ) -> Expr:
     """Enforce the length of text columns on INSERT and UPDATE.
 
@@ -619,11 +619,7 @@ def enforce_text_length(
     if not isinstance(table, exp.Table):
         return expression
     # A temporary table's lengths are recorded under temp.main, where DuckDB keeps it.
-    catalog, schema = (
-        location(table, current_database, current_schema)
-        if location
-        else (table.catalog or current_database, table.db or current_schema)
-    )
+    catalog, schema = temporary_tables.location(table, current_database, current_schema)
     if not (catalog and schema):
         return expression
 
