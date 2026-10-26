@@ -281,6 +281,70 @@ def test_datediff_string_literal_timestamp_cast(cur: snowflake.connector.cursor.
     assert cur.fetchall() == [(datetime.datetime(2023, 4, 2, 0, 0), datetime.datetime(2023, 3, 2, 0, 0), -44640)]
 
 
+@pytest.mark.parametrize(
+    ("part", "expected"),
+    [
+        ("year", datetime.date(2024, 1, 1)),
+        ("month", datetime.date(2024, 5, 1)),
+        ("week", datetime.date(2024, 5, 6)),
+        ("day", datetime.date(2024, 5, 9)),
+        ("hour", datetime.date(2024, 5, 9)),
+    ],
+)
+def test_date_trunc_date(cur: snowflake.connector.cursor.SnowflakeCursor, part: str, expected: datetime.date):
+    # see https://docs.snowflake.com/en/sql-reference/functions/date_trunc#examples
+    # Snowflake also tests the hour alias 'hh' with a DATE in snowpark-python's
+    # tests/integ/scala/test_function_suite.py::test_date_trunc.
+    cur.execute("create table test_date_trunc (mydate date)")
+    cur.execute("insert into test_date_trunc values ('2024-05-09')")
+    cur.execute(f"select date_trunc('{part}', mydate) from test_date_trunc")
+    assert cur.fetchall() == [(expected,)]
+    assert cur.description[0].type_code == 3  # DATE
+
+
+@pytest.mark.parametrize(
+    ("part", "expected"),
+    [("month", datetime.datetime(2024, 5, 1)), ("hour", datetime.datetime(2024, 5, 9, 8))],
+)
+def test_date_trunc_timestamp(cur: snowflake.connector.cursor.SnowflakeCursor, part: str, expected: datetime.datetime):
+    cur.execute("create table test_date_trunc (mytimestamp timestamp_ntz)")
+    cur.execute("insert into test_date_trunc values ('2024-05-09 08:50:57.891')")
+    cur.execute(f"select date_trunc('{part}', mytimestamp) from test_date_trunc")
+    assert cur.fetchall() == [(expected,)]
+    assert cur.description[0].type_code == 8  # TIMESTAMP_NTZ
+
+
+def test_date_trunc_date_literal(cur: snowflake.connector.cursor.SnowflakeCursor):
+    cur.execute("select date_trunc('month', '2026-10-26'::date)")
+    assert cur.fetchall() == [(datetime.date(2026, 10, 1),)]
+    assert cur.description[0].type_code == 3  # DATE
+
+
+def test_date_trunc_date_null(cur: snowflake.connector.cursor.SnowflakeCursor):
+    cur.execute("select date_trunc('month', NULL::date)")
+    assert cur.fetchall() == [(None,)]
+    assert cur.description[0].type_code == 3  # DATE
+
+
+def test_date_trunc_date_nested(cur: snowflake.connector.cursor.SnowflakeCursor):
+    cur.execute("select date_trunc('year', date_trunc('month', '2024-05-09'::date))")
+    assert cur.fetchall() == [(datetime.date(2024, 1, 1),)]
+
+
+def test_date_trunc_date_subquery(cur: snowflake.connector.cursor.SnowflakeCursor):
+    cur.execute("create table dates (d date)")
+    cur.execute("insert into dates values ('2024-05-09')")
+    cur.execute("select date_trunc('month', (select max(d) from dates))")
+    assert cur.fetchall() == [(datetime.date(2024, 5, 1),)]
+
+
+def test_date_trunc_date_no_database():
+    with fakesnow.patch(), snowflake.connector.connect() as conn:
+        cur = conn.cursor()
+        cur.execute("select date_trunc('month', '2024-05-09'::date)")
+        assert cur.fetchall() == [(datetime.date(2024, 5, 1),)]
+
+
 def test_equal_null(cur: snowflake.connector.cursor.SnowflakeCursor):
     cur.execute("select equal_null(NULL, NULL), equal_null(1, 1), equal_null(1, 2), equal_null(1, NULL)")
     assert cur.fetchall() == [(True, True, False, False)]
@@ -569,6 +633,23 @@ def test_to_decimal(cur: snowflake.connector.cursor.SnowflakeCursor):
         ("12.3456", 12, Decimal("12.3"), Decimal("12.34560000")),
         ("98.76546", 99, Decimal("98.8"), Decimal("98.76546000")),
     ]
+
+
+@pytest.mark.parametrize(
+    ("part", "expected"),
+    [
+        ("year", datetime.date(2024, 1, 1)),
+        ("month", datetime.date(2024, 5, 1)),
+        ("day", datetime.date(2024, 5, 9)),
+        ("hour", datetime.date(2024, 5, 9)),
+    ],
+)
+def test_trunc_date(cur: snowflake.connector.cursor.SnowflakeCursor, part: str, expected: datetime.date):
+    # see https://docs.snowflake.com/en/sql-reference/functions/trunc2#examples
+    cur.execute("create table test_trunc (mydate date)")
+    cur.execute("insert into test_trunc values ('2024-05-09')")
+    cur.execute(f"select trunc(mydate, '{part}') from test_trunc")
+    assert cur.fetchall() == [(expected,)]
 
 
 def test_truncate(dcur: snowflake.connector.cursor.DictCursor):
