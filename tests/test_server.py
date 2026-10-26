@@ -953,3 +953,10 @@ def test_server_temporary_table_session_isolation(server: dict) -> None:
         assert cur1.fetchall() == [(1,)]
         cur2.execute(f"select * from {database}.S.T")
         assert cur2.fetchall() == [(2,)]
+
+
+def test_varchar_length_server(scur: snowflake.connector.cursor.SnowflakeCursor):
+    scur.execute("create table example (name varchar(5))")
+    with pytest.raises(snowflake.connector.errors.ProgrammingError) as excinfo:
+        scur.execute("insert into example values ('abcdef')")
+    assert (excinfo.value.errno, excinfo.value.sqlstate) == (100078, "22000")
