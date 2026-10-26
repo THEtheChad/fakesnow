@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 from string import Template
 from typing import cast
@@ -588,7 +589,11 @@ def extract_column_metadata(expression: Expr) -> Expr:
 
 
 def enforce_text_length(
-    expression: Expr, duck_conn: DuckDBPyConnection, current_database: str | None, current_schema: str | None
+    expression: Expr,
+    duck_conn: DuckDBPyConnection,
+    current_database: str | None,
+    current_schema: str | None,
+    location: Callable[[exp.Table, str | None, str | None], tuple[str | None, str | None]] | None = None,
 ) -> Expr:
     """Enforce the length of text columns on INSERT and UPDATE.
 
@@ -611,9 +616,15 @@ def enforce_text_length(
     else:
         return expression
 
-    if not isinstance(table, exp.Table) or not (catalog := table.catalog or current_database):
+    if not isinstance(table, exp.Table):
         return expression
-    if not (schema := table.db or current_schema):
+    # A temporary table's lengths are recorded under temp.main, where DuckDB keeps it.
+    catalog, schema = (
+        location(table, current_database, current_schema)
+        if location
+        else (table.catalog or current_database, table.db or current_schema)
+    )
+    if not (catalog and schema):
         return expression
 
     columns = info_schema.text_columns(duck_conn, catalog, schema, table.name)

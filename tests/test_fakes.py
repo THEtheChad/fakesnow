@@ -744,6 +744,39 @@ def test_temporary_table_does_not_capture_sequence(cur: snowflake.connector.curs
         cur.execute("select temp1.nextval")
 
 
+def test_temporary_table_varchar_length(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create temporary table temp1 (name varchar(2))")
+
+    with pytest.raises(ProgrammingError) as excinfo:
+        cur.execute("insert into temp1 values ('abc')")
+
+    assert (excinfo.value.errno, excinfo.value.sqlstate) == (100078, "22000")
+
+
+def test_temporary_table_shadowing_varchar_length(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    # The temporary table takes precedence, qualified or not, so its length applies.
+    cur.execute("create table example (name varchar(10))")
+    cur.execute("create temporary table example (name varchar(2))")
+
+    with pytest.raises(ProgrammingError) as excinfo:
+        cur.execute("insert into db1.schema1.example values ('abcde')")
+
+    assert (excinfo.value.errno, excinfo.value.sqlstate) == (100078, "22000")
+
+
+def test_temporary_table_keeps_permanent_varchar_length(cur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    cur.execute("create table example (name varchar(10))")
+    cur.execute("create temporary table example (name varchar(2))")
+    cur.execute("drop table example")
+
+    cur.execute("insert into example values ('abcde')")
+    cur.execute(
+        "select character_maximum_length from information_schema.columns "
+        "where table_name = 'EXAMPLE' and column_name = 'NAME'"
+    )
+    assert cur.fetchall() == [(10,)]
+
+
 def test_to_date(cur: snowflake.connector.cursor.SnowflakeCursor):
     cur.execute(
         "SELECT to_date(to_timestamp(0)), to_date(cast(to_timestamp(0) as timestamp(9))), to_date('2024-01-26')"

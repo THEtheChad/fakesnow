@@ -960,3 +960,20 @@ def test_varchar_length_server(scur: snowflake.connector.cursor.SnowflakeCursor)
     with pytest.raises(snowflake.connector.errors.ProgrammingError) as excinfo:
         scur.execute("insert into example values ('abcdef')")
     assert (excinfo.value.errno, excinfo.value.sqlstate) == (100078, "22000")
+
+
+def test_server_temporary_table_keeps_permanent_varchar_length(server: dict) -> None:
+    # Another session's temporary table must not change the length a permanent table enforces.
+    shared = server | {"session_parameters": {}}
+    database = f"TEMP_LENGTH_{uuid.uuid4().hex.upper()}"
+    with (
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn1,
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn2,
+        conn1.cursor() as cur1,
+        conn2.cursor() as cur2,
+    ):
+        cur1.execute("create table example (name varchar(10))")
+        cur1.execute("create temporary table example (name varchar(2))")
+        cur2.execute("insert into example values ('abcde')")
+        cur2.execute("select name from example")
+        assert cur2.fetchall() == [("abcde",)]

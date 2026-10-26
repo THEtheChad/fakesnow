@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from string import Template
 from typing import cast
 
@@ -340,12 +341,20 @@ def insert_table_comment_sql(catalog: str, schema: str, table: str, comment: str
 
 
 def column_metadata_updates(
-    conn: duckdb.DuckDBPyConnection, expression: Expr, catalog: str | None, schema: str | None
+    conn: duckdb.DuckDBPyConnection,
+    expression: Expr,
+    catalog: str | None,
+    schema: str | None,
+    location: Callable[[exp.Table], tuple[str | None, str | None]] | None = None,
 ) -> list[tuple[str, list[str | int | None]]]:
     """Prepare column metadata changes to apply only after successful DDL.
 
     Inspect IF NOT EXISTS before executing it so a no-op preserves the existing metadata.
     Names are bound parameters, including quoted identifiers containing apostrophes.
+
+    A temporary table's metadata is keyed by where DuckDB keeps it, temp.main, so it never replaces the metadata
+    of a permanent table with the same name. `location` resolves a DROP or ALTER target to temp.main when it
+    names a temporary table.
     """
     if not isinstance(expression, (exp.Create, exp.Alter, exp.Drop)):
         return []
@@ -360,8 +369,12 @@ def column_metadata_updates(
         target = target or next(iter(expression.args.get("tables") or []), None)
     if not isinstance(target, exp.Table):
         return []
-    catalog = target.catalog or catalog
-    schema = target.db or schema
+    if expression.args.get("temporary_table_owner"):
+        catalog, schema = "temp", "main"
+    elif location and not isinstance(expression, exp.Create):
+        catalog, schema = location(target)
+    else:
+        catalog, schema = target.catalog or catalog, target.db or schema
     assert catalog and schema
     key: list[str | int | None] = [catalog, schema, target.name]
     table = "_fs_global._fs_information_schema._fs_columns_ext"

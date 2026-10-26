@@ -77,6 +77,20 @@ class TemporaryTables:
         # it would move the existing table's stage to the current schema.
         self._temporary.setdefault(live[table.name], owner)
 
+    def location(
+        self, table: exp.Table, current_database: str | None, current_schema: str | None
+    ) -> tuple[str | None, str | None]:
+        """The catalog and schema DuckDB finds a referenced table in.
+
+        DuckDB looks an unqualified name up in temp.main before the current schema, and transform has already
+        rewritten qualified references to a temporary table to temp.main.
+        """
+        if not table.db and self._temporary:
+            sql = "SELECT 1 FROM duckdb_tables() WHERE temporary AND table_name = ?"
+            if self._duck_conn.execute(sql, [table.name]).fetchone():
+                return "temp", "main"
+        return table.catalog or current_database, table.db or current_schema
+
     def oid(self, catalog: str | None, schema: str, name: str) -> int | None:
         if not self._temporary:
             return None
