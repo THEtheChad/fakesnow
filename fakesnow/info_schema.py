@@ -9,6 +9,8 @@ import duckdb
 from sqlglot import exp
 from sqlglot.expressions import Expr
 
+from fakesnow.temporary_tables import TemporaryTables
+
 SQL_CREATE_GLOBAL_FS_INFORMATION_SCHEMA = """
 create schema if not exists _fs_global._fs_information_schema
 """
@@ -26,8 +28,9 @@ create table if not exists _fs_global._fs_information_schema._fs_tables_ext (
 """
 
 
-SQL_CREATE_GLOBAL_INFORMATION_SCHEMA_COLUMNS_EXT = """
-create table if not exists _fs_global._fs_information_schema._fs_columns_ext (
+_SQL_CREATE_COLUMNS_EXT = Template(
+    """
+create ${temporary} table if not exists ${table} (
     ext_table_catalog varchar,
     ext_table_schema varchar,
     ext_table_name varchar,
@@ -38,6 +41,14 @@ create table if not exists _fs_global._fs_information_schema._fs_columns_ext (
     PRIMARY KEY(ext_table_catalog, ext_table_schema, ext_table_name, ext_column_name)
 )
 """
+)
+
+SQL_CREATE_GLOBAL_INFORMATION_SCHEMA_COLUMNS_EXT = _SQL_CREATE_COLUMNS_EXT.substitute(
+    temporary="", table="_fs_global._fs_information_schema._fs_columns_ext"
+)
+SQL_CREATE_TEMP_INFORMATION_SCHEMA_COLUMNS_EXT = _SQL_CREATE_COLUMNS_EXT.substitute(
+    temporary="temporary", table="temp.main._fs_columns_ext"
+)
 
 # replicates the output structure of https://docs.snowflake.com/en/sql-reference/sql/show-users
 SQL_CREATE_GLOBAL_INFORMATION_SCHEMA_USERS_TABLE = """
@@ -120,7 +131,11 @@ COLLATION_NAME, IS_IDENTITY, IDENTITY_GENERATION, IDENTITY_CYCLE,
     null::VARCHAR as IDENTITY_ORDERED,
     null::VARCHAR as DATA_TYPE_ALIAS
 from system.information_schema.columns columns
-left join _fs_global._fs_information_schema._fs_columns_ext ext
+left join (
+    select * from _fs_global._fs_information_schema._fs_columns_ext
+    union all
+    select * from temp.main._fs_columns_ext
+) ext
   on ext_table_catalog = columns.table_catalog
  AND ext_table_schema = columns.table_schema
  AND ext_table_name = columns.table_name
@@ -131,6 +146,7 @@ LEFT JOIN duckdb_columns ddb_columns
  AND ddb_columns.table_name = columns.table_name
  AND ddb_columns.column_name = columns.column_name
 where schema_name != '_fs_information_schema'
+  and not (columns.table_catalog = 'temp' and columns.table_name = '_fs_columns_ext')
 """
 
 
@@ -335,6 +351,7 @@ def fs_global_creation_sql() -> str:
         {SQL_CREATE_GLOBAL_FS_INFORMATION_SCHEMA};
         {SQL_CREATE_GLOBAL_INFORMATION_SCHEMA_TABLES_EXT};
         {SQL_CREATE_GLOBAL_INFORMATION_SCHEMA_COLUMNS_EXT};
+        {SQL_CREATE_TEMP_INFORMATION_SCHEMA_COLUMNS_EXT};
         {SQL_CREATE_GLOBAL_INFORMATION_SCHEMA_COLUMNS_VIEW};
         {SQL_CREATE_GLOBAL_INFORMATION_SCHEMA_USERS_TABLE};
         {SQL_CREATE_GLOBAL_INFORMATION_SCHEMA_STAGES_TABLE};
@@ -352,12 +369,20 @@ def insert_table_comment_sql(catalog: str, schema: str, table: str, comment: str
 
 
 def column_metadata_updates(
-    conn: duckdb.DuckDBPyConnection, expression: Expr, catalog: str | None, schema: str | None
+    conn: duckdb.DuckDBPyConnection,
+    expression: Expr,
+    catalog: str | None,
+    schema: str | None,
+    temporary_tables: TemporaryTables,
 ) -> list[tuple[str, list[str | int | None]]]:
     """Prepare column metadata changes to apply only after successful DDL.
 
     Inspect IF NOT EXISTS before executing it so a no-op preserves the existing metadata.
     Names are bound parameters, including quoted identifiers containing apostrophes.
+
+    A temporary table's metadata is keyed by where DuckDB keeps it, temp.main, so it never replaces the metadata
+    of a permanent table with the same name. TemporaryTables resolves DROP and ALTER targets; their metadata
+    is also stored in a session-local table so other sessions cannot overwrite it.
     """
     if not isinstance(expression, (exp.Create, exp.Alter, exp.Drop)):
         return []
@@ -372,11 +397,15 @@ def column_metadata_updates(
         target = target or next(iter(expression.args.get("tables") or []), None)
     if not isinstance(target, exp.Table):
         return []
-    catalog = target.catalog or catalog
-    schema = target.db or schema
+    if expression.args.get("temporary_table_owner"):
+        catalog, schema = "temp", "main"
+    elif not isinstance(expression, exp.Create):
+        catalog, schema = temporary_tables.location(target, catalog, schema)
+    else:
+        catalog, schema = target.catalog or catalog, target.db or schema
     assert catalog and schema
     key: list[str | int | None] = [catalog, schema, target.name]
-    table = "_fs_global._fs_information_schema._fs_columns_ext"
+    table = _column_metadata_table(catalog)
     predicate = "ext_table_catalog = ? AND ext_table_schema = ? AND ext_table_name = ?"
     updates: list[tuple[str, list[str | int | None]]] = []
 
@@ -444,6 +473,17 @@ def column_metadata_updates(
     return updates
 
 
+def _column_metadata_table(catalog: str) -> str:
+    """Keep temporary metadata in the same session as the tables it describes.
+
+    temp.main names are unique only within a connection. A shared metadata table would let one session's
+    CREATE, ALTER or DROP overwrite another's limits. DuckDB discards this store on connection close.
+    """
+    if catalog != "temp":
+        return "_fs_global._fs_information_schema._fs_columns_ext"
+    return "temp.main._fs_columns_ext"
+
+
 def text_columns(
     conn: duckdb.DuckDBPyConnection, catalog: str, schema: str, table: str
 ) -> list[tuple[str, int | None, str | None]]:
@@ -454,8 +494,8 @@ def text_columns(
     """
     sizes = dict(
         conn.execute(
-            """SELECT ext_column_name, ext_character_maximum_length
-            FROM _fs_global._fs_information_schema._fs_columns_ext
+            f"""SELECT ext_column_name, ext_character_maximum_length
+            FROM {_column_metadata_table(catalog)}
             WHERE ext_table_catalog = ? AND ext_table_schema = ? AND ext_table_name = ?
                 AND ext_character_maximum_length < 16777216""",
             [catalog, schema, table],

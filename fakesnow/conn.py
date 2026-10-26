@@ -37,6 +37,8 @@ class FakeSnowflakeConnection:
         **kwargs: Any,
     ):
         self._duck_conn = duck_conn
+        # The shared columns view reads this connection's temporary metadata alongside permanent metadata.
+        duck_conn.execute(info_schema.SQL_CREATE_TEMP_INFORMATION_SCHEMA_COLUMNS_EXT)
         self._is_closed = False
         # resolve database and schema as snowflake does identifiers: upper case unless quoted, so
         # they appear as upper-cased in information_schema, and a quoted name keeps its case.

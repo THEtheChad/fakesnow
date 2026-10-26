@@ -543,7 +543,13 @@ class FakeSnowflakeCursor:
             )
             .transform(lambda e: transforms.create_table_as(e, self._duck_conn), copy=False)
             .transform(
-                lambda e: transforms.enforce_text_length(e, self._duck_conn, self._conn.database, self._conn.schema),
+                lambda e: transforms.enforce_text_length(
+                    e,
+                    self._duck_conn,
+                    self._conn.database,
+                    self._conn.schema,
+                    self._conn.temporary_tables,
+                ),
                 copy=False,
             )
             .transform(transforms.enforce_cast_text_length, copy=False)
@@ -645,7 +651,11 @@ class FakeSnowflakeCursor:
                 self._conn._in_transaction = True
 
         column_updates = info_schema.column_metadata_updates(
-            self._duck_conn, transformed, self._conn.database, self._conn.schema
+            self._duck_conn,
+            transformed,
+            self._conn.database,
+            self._conn.schema,
+            self._conn.temporary_tables,
         )
         affected_count = None
         try:
