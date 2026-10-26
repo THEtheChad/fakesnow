@@ -101,6 +101,23 @@ def test_describe_timestamp_ltz_column(cur: snowflake.connector.cursor.Snowflake
     assert [(d.name, d.type_code) for d in cur.describe("select * from example")] == [("L", 6), ("Z", 7)]
 
 
+@pytest.mark.parametrize("table", ["example", "db1.schema1.example"])
+def test_describe_timestamp_ltz_temporary_column(cur: snowflake.connector.cursor.SnowflakeCursor, table: str):
+    cur.execute("create temporary table example (l timestamp_ltz, z timestamp_tz)")
+    cur.execute(f"select l, z from {table}")
+
+    assert [(d.name, d.type_code) for d in cur.description] == [("L", 6), ("Z", 7)]
+
+
+def test_describe_timestamp_ltz_temporary_shadows_permanent(cur: snowflake.connector.cursor.SnowflakeCursor):
+    # The temporary table takes precedence over a permanent table of the same name.
+    cur.execute("create table example (ts timestamp_tz)")
+    cur.execute("create temporary table example (ts timestamp_ltz)")
+    cur.execute("select ts from example")
+
+    assert [(d.name, d.type_code) for d in cur.description] == [("TS", 6)]
+
+
 def test_describe_table_timestamp_ltz(cur: snowflake.connector.cursor.SnowflakeCursor):
     cur.execute("create table example (l timestamp_ltz, z timestamp_tz)")
 

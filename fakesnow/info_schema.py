@@ -154,7 +154,11 @@ where schema_name != '_fs_information_schema'
 SQL_SELECT_COLUMN_TYPES = """
 select database_name, schema_name, table_name, column_name, ext_data_type
 from duckdb_columns()
-left join _fs_global._fs_information_schema._fs_columns_ext
+left join (
+    select * from _fs_global._fs_information_schema._fs_columns_ext
+    union all
+    select * from temp.main._fs_columns_ext
+) ext
     on database_name = ext_table_catalog and schema_name = ext_table_schema
     and table_name = ext_table_name and column_name = ext_column_name
 where list_contains(?, table_name)

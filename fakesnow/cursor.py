@@ -216,12 +216,20 @@ class FakeSnowflakeCursor:
             tables = list({table.name for table in expression.find_all(exp.Table)})
             columns: dict = {}
             if tables:
+                temporary: dict = {}
                 for catalog, db, table, column, data_type in self._duck_conn.execute(
                     info_schema.SQL_SELECT_COLUMN_TYPES, [tables]
                 ).fetchall():
-                    columns.setdefault(catalog, {}).setdefault(db, {}).setdefault(table, {})[column] = types.get(
-                        data_type, "UNKNOWN"
-                    )
+                    column_type = types.get(data_type, "UNKNOWN")
+                    columns.setdefault(catalog, {}).setdefault(db, {}).setdefault(table, {})[column] = column_type
+                    if catalog == "temp":
+                        temporary.setdefault(table, {})[column] = column_type
+                if temporary:
+                    # TemporaryTables rewrites a qualified reference to unquoted temp.main, which qualify upper-cases.
+                    columns.setdefault("TEMP", {}).setdefault("MAIN", {}).update(temporary)
+                    # An unqualified name finds a temporary table before the current schema's table.
+                    if self._conn.database and self._conn.schema:
+                        columns.setdefault(self._conn.database, {}).setdefault(self._conn.schema, {}).update(temporary)
             # Names from the catalog are already normalized; preserve quoted mixed-case identifiers.
             schema = MappingSchema(columns, dialect="snowflake", normalize=False)
             query = qualify(
