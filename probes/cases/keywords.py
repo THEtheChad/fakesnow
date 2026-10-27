@@ -39,7 +39,7 @@ TABLE_DIFFERS: dict[str, tuple[str, list[str]]] = {
 COLUMN_DIFFERS: dict[str, tuple[str, list[str]]] = {
     **dict.fromkeys(["EXCLUDE", "RETURNING", "GLOB", "LATERAL", "USING"], (_ACCEPTS, _PARSER)),
     **dict.fromkeys(["TRY_CAST", "DEFAULT", "ROW", "ROWS"], _REFUSES),
-    **dict.fromkeys(["UNION", "SAMPLE", "QUALIFY", "ILIKE", "TABLESAMPLE"], _SELECT_ONLY),
+    **dict.fromkeys(["UNION", "SAMPLE"], _SELECT_ONLY),
     "INSTALL": _DESCRIBE,
 }
 

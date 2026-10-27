@@ -187,10 +187,6 @@
     "fakesnow": "ea9e02f868983151d4145acdf79499d8bf75be494d3e21d6cf06ef1cbdf61bae",
     "fakesnow-server": "ea9e02f868983151d4145acdf79499d8bf75be494d3e21d6cf06ef1cbdf61bae"
   },
-  "keywords.ilike.column": {
-    "fakesnow": "3631244bb4acb12366bf7ac5cec4587cb4ac42425f0fb01965f79ccdfe04da80",
-    "fakesnow-server": "3631244bb4acb12366bf7ac5cec4587cb4ac42425f0fb01965f79ccdfe04da80"
-  },
   "keywords.install.column": {
     "fakesnow": "77ee834626d283ab94127e2e9e5da7d59ed7ae005b4acc2baf163a8b86fea0bc",
     "fakesnow-server": "a14162abb1438e35e9ea20f718db21b199b64281fb1f1db441796f6a4f8b74d8"
@@ -206,10 +202,6 @@
   "keywords.lateral.table": {
     "fakesnow": "98e6d96b033def37517a467980d0fdf0e059653184a1a7a6e2d2765797012052",
     "fakesnow-server": "98e6d96b033def37517a467980d0fdf0e059653184a1a7a6e2d2765797012052"
-  },
-  "keywords.qualify.column": {
-    "fakesnow": "722a878e79811a4ef08edd48db8e04026af4edd2ca57c67ea9afe83fe5506a65",
-    "fakesnow-server": "722a878e79811a4ef08edd48db8e04026af4edd2ca57c67ea9afe83fe5506a65"
   },
   "keywords.returning.column": {
     "fakesnow": "237f1298918f1e5dec6af2e1225a337d7e531e8b070670d3db71e9b122a16586",
@@ -238,10 +230,6 @@
   "keywords.sample.column": {
     "fakesnow": "e340e9a1f43c778ca738ce0234a84407c0784485a83dc1059dd0c9b594cb62a0",
     "fakesnow-server": "e340e9a1f43c778ca738ce0234a84407c0784485a83dc1059dd0c9b594cb62a0"
-  },
-  "keywords.tablesample.column": {
-    "fakesnow": "0588cb48d99bbe95a2f4a09c6d97227af8861b32c74b7aeb0c0adad7ae2e0c85",
-    "fakesnow-server": "0588cb48d99bbe95a2f4a09c6d97227af8861b32c74b7aeb0c0adad7ae2e0c85"
   },
   "keywords.try_cast.column": {
     "fakesnow": "0a4554e2d2c558dd3795587760a802c60597b69964e43b194037592708dcc460",
