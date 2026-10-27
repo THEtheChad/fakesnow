@@ -1174,6 +1174,36 @@ def test_unquoted_column_name_reserved_by_duckdb(dcur: snowflake.connector.curso
     assert dcur.fetchall() == [{name.upper(): 1}]
 
 
+# DuckDB and Snowflake both reserve these words
+SNOWFLAKE_RESERVED_NAMES = [
+    "by",
+    "check",
+    "create",
+    "group",
+    "ilike",
+    "in",
+    "is",
+    "like",
+    "null",
+    "qualify",
+    "tablesample",
+]
+
+
+@pytest.mark.parametrize("name", SNOWFLAKE_RESERVED_NAMES)
+def test_unquoted_table_name_reserved_by_snowflake(cur: snowflake.connector.cursor.SnowflakeCursor, name: str):
+    with pytest.raises(snowflake.connector.errors.ProgrammingError) as excinfo:
+        cur.execute(f"create table {name} (x int)")
+    assert "001003 (42000)" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("name", SNOWFLAKE_RESERVED_NAMES)
+def test_unquoted_column_name_reserved_by_snowflake(cur: snowflake.connector.cursor.SnowflakeCursor, name: str):
+    with pytest.raises(snowflake.connector.errors.ProgrammingError) as excinfo:
+        cur.execute(f"create table example ({name} int)")
+    assert "001003 (42000)" in str(excinfo.value)
+
+
 def test_unquoted_names_reserved_by_duckdb_are_upper_cased(cur: snowflake.connector.cursor.SnowflakeCursor):
     cur.execute("create table pivot (semi int)")
     cur.execute("select table_name, column_name from information_schema.columns where table_name = 'PIVOT'")
@@ -1268,6 +1298,15 @@ def test_create_table_as_star_from_name_reserved_by_duckdb(cur: snowflake.connec
     cur.execute("create table copied (anti int) as select * from pivot")
     cur.execute("select anti from copied")
     assert cur.fetchall() == [(1,)]
+
+
+@pytest.mark.parametrize("name", ["NULL", "QUALIFY"])
+def test_create_table_as_star_from_quoted_reserved_column(cur: snowflake.connector.cursor.SnowflakeCursor, name: str):
+    cur.execute(f'create table source ("{name}" int)')
+    cur.execute("insert into source values (7)")
+    cur.execute("create table copied (x int) as select * from source")
+    cur.execute("select x from copied")
+    assert cur.fetchall() == [(7,)]
 
 
 def test_cte_and_aliases_reserved_by_duckdb(dcur: snowflake.connector.cursor.DictCursor):
