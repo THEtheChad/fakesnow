@@ -49,20 +49,20 @@
     "fakesnow-server": "906cc0a8419ba149c3385a8286af8f312ff43c8193729364bee970f941e5f1e1"
   },
   "ddl.show-columns": {
-    "fakesnow": "a98a50d73374376e86d568d1875c1958d2addafbfc3a0ff09d61e4efbc56dc8e",
-    "fakesnow-server": "a98a50d73374376e86d568d1875c1958d2addafbfc3a0ff09d61e4efbc56dc8e"
+    "fakesnow": "5b686d31ea5b8302bb56c7f142defd9d4b7b8115fac78c586d4579d310f10a18",
+    "fakesnow-server": "5b686d31ea5b8302bb56c7f142defd9d4b7b8115fac78c586d4579d310f10a18"
   },
   "ddl.show-schemas": {
-    "fakesnow": "f433bd7cbab8d20bafa575cd351c380b61d2ed4f19c1f22472ab3e0f7148adb2",
-    "fakesnow-server": "f433bd7cbab8d20bafa575cd351c380b61d2ed4f19c1f22472ab3e0f7148adb2"
+    "fakesnow": "2ba59f1545ee5aa44576bbec63381de5cf8fc7e88aeb23bde06abdc9a32f55a6",
+    "fakesnow-server": "2ba59f1545ee5aa44576bbec63381de5cf8fc7e88aeb23bde06abdc9a32f55a6"
   },
   "ddl.show-tables": {
-    "fakesnow": "33d826ca31a117602f8f1eba6f0be0371bdc13de5bf1e7c63720ffd28757b910",
-    "fakesnow-server": "33d826ca31a117602f8f1eba6f0be0371bdc13de5bf1e7c63720ffd28757b910"
+    "fakesnow": "eac283ada4dc499a6cf2ea5223f2fcb3de9d1214bc87c9044de64ea9a8a4f3f0",
+    "fakesnow-server": "eac283ada4dc499a6cf2ea5223f2fcb3de9d1214bc87c9044de64ea9a8a4f3f0"
   },
   "ddl.show-tables-columns": {
-    "fakesnow": "a310614b92b43bcc12ba24b33c2631df2ba080f3347f388d036c96bc69470f37",
-    "fakesnow-server": "a310614b92b43bcc12ba24b33c2631df2ba080f3347f388d036c96bc69470f37"
+    "fakesnow": "c9213ae2a76b3d40350f712595d20e38896ea04d0abdd83119be0502230b9d94",
+    "fakesnow-server": "c9213ae2a76b3d40350f712595d20e38896ea04d0abdd83119be0502230b9d94"
   },
   "ddl.temporary-table-after-use-schema": {
     "fakesnow": "92cbcfb46de39cdb865e90ed77ee95f6ff371f8ff9cc3a7f0ea8ca4ced8a0935",

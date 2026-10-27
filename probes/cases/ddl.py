@@ -36,7 +36,7 @@ def show_columns(conn: SnowflakeConnection, ctx: ProbeContext) -> list[tuple[Any
 
 
 def show_schemas(conn: SnowflakeConnection, ctx: ProbeContext) -> list[tuple[Any, ...]]:
-    return show(conn, ctx, "show schemas like '{schema}' in database {database}", ["name", "database_name"])
+    return show(conn, ctx, "show schemas like 'SS_A' in database {schema}_SS", ["name", "database_name"])
 
 
 def describe_table(conn: SnowflakeConnection, ctx: ProbeContext) -> list[tuple[Any, ...]]:
@@ -240,7 +240,15 @@ CASES = [
     ),
     Case(
         id="ddl.show-schemas",
-        description="SHOW SCHEMAS LIKE finds the run's schema",
+        description="SHOW SCHEMAS LIKE lists only the matching schema",
+        # a database of its own, so what fakesnow lists doesn't depend on which other cases ran
+        setup=[
+            "create database {schema}_SS",
+            "create schema {schema}_SS.SS_A",
+            "create schema {schema}_SS.SS_B",
+            "use schema {database}.{schema}",
+        ],
+        teardown=["drop database if exists {schema}_SS"],
         run=show_schemas,
         expected=Expected([UNFILED], "SHOW SCHEMAS LIKE ignores the pattern and lists every schema"),
     ),
