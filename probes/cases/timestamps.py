@@ -1,6 +1,6 @@
 """Dates and timestamps: DATE_TRUNC, the three timestamp types, and date functions. The run sets TIMEZONE to UTC."""
 
-from probes import UNFILED, Case, Compare, Expected
+from probes import Case, Compare, Expected
 from probes.cases._gaps import DUPLICATE_NAMES, ERROR_CODES
 
 TYPES_ONLY = Compare(rows=False)
@@ -104,13 +104,13 @@ CASES = [
         description="A TIMESTAMP_TZ keeps its offset (compared without normalising aware datetimes to instants)",
         compare=Compare(normalise=False),
         sql="select '2024-01-01 10:00:00 +02:00'::timestamp_tz as t",
-        expected=Expected([UNFILED], TZ_OFFSET),
+        expected=Expected(["#488"], TZ_OFFSET),
     ),
     Case(
         id="timestamps.tz-to-varchar",
         description="A TIMESTAMP_TZ cast to VARCHAR shows its offset in Snowflake's default format",
         sql="select to_varchar('2024-01-01 10:00:00 +02:00'::timestamp_tz) as t",
-        expected=Expected([UNFILED], TZ_OFFSET),
+        expected=Expected(["#488"], TZ_OFFSET),
     ),
     Case(
         id="timestamps.ntz-fraction",
@@ -130,7 +130,7 @@ CASES = [
         id="timestamps.timestamp-plus-interval",
         description="Adding an INTERVAL to a TIMESTAMP_NTZ and a DATE",
         sql="select '2024-01-01 00:00:00'::timestamp_ntz + interval '1 day', '2024-01-31'::date + interval '1 month'",
-        expected=Expected([UNFILED], "DATE + INTERVAL is a TIMESTAMP_NTZ in fakesnow, a DATE in Snowflake"),
+        expected=Expected(["#488"], "DATE + INTERVAL is a TIMESTAMP_NTZ in fakesnow, a DATE in Snowflake"),
         # Expression labels vary; this case checks values/types.
         compare=Compare(names=False),
     ),
@@ -224,13 +224,13 @@ CASES = [
         id="timestamps.to-char-month-name",
         description="TO_CHAR formats an abbreviated month name",
         sql="select to_char('2024-05-09'::date, 'DD Mon YYYY') as value",
-        expected=Expected([UNFILED], "TO_CHAR's Mon format element isn't translated"),
+        expected=Expected(["tobymao/sqlglot#8820"], "TO_CHAR's Mon format element isn't translated"),
     ),
     Case(
         id="timestamps.date-to-varchar-default",
         description="A date and a TIMESTAMP_NTZ cast to VARCHAR in the default output format",
         sql="select '2024-05-09'::date::varchar, '2024-05-09 10:11:12'::timestamp_ntz::varchar",
-        expected=Expected([UNFILED], "a TIMESTAMP_NTZ cast to VARCHAR lacks Snowflake's default milliseconds ('.000')"),
+        expected=Expected(["#488"], "a TIMESTAMP_NTZ cast to VARCHAR lacks Snowflake's default milliseconds ('.000')"),
         # Expression labels vary; this case checks values/types.
         compare=Compare(names=False),
     ),

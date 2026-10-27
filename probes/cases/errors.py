@@ -1,6 +1,6 @@
 """Error codes: errno and SQLSTATE for missing objects, bad SQL and bad data."""
 
-from probes import UNFILED, Case, Expected
+from probes import Case, Expected
 from probes.cases._gaps import ERROR_CODES
 
 T = ["create or replace table errs_t (x int, y varchar)"]
@@ -81,7 +81,7 @@ CASES = [
         id="errors.division-by-zero",
         description="Integer division by zero",
         sql="select 1/0",
-        expected=Expected([UNFILED], "1/0 returns inf (FLOAT) instead of failing with 100051 Division by zero"),
+        expected=Expected(["#483"], "1/0 returns inf (FLOAT) instead of failing with 100051 Division by zero"),
     ),
     Case(
         id="errors.not-null-violation",
@@ -89,7 +89,7 @@ CASES = [
         setup=["create or replace table errs_nn (x int not null)"],
         sql="insert into errs_nn values (null)",
         expected=Expected(
-            [UNFILED],
+            ["#483"],
             "a NOT NULL violation raises DuckDB's ConstraintException, not "
             "IntegrityError 100072 (HTTP 500 in server mode)",
         ),

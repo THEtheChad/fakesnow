@@ -5,12 +5,12 @@ from typing import Any
 import pandas as pd
 from snowflake.connector import SnowflakeConnection
 
-from probes import UNFILED, Case, Expected, ProbeContext
+from probes import Case, Expected, ProbeContext
 
 OVER_SERVER = Expected(
-    [UNFILED],
-    "over fakesnow's server, connector 4.8.1's write_pandas fails: its quoted temporary stage name is rejected "
-    "('invalid URL prefix'), and auto_create_table's INFER_SCHEMA isn't supported",
+    ["#493"],
+    "over fakesnow's server, the connector's write_pandas fails: its COPY transformation reads from the stage as a "
+    "string literal ('invalid URL prefix'), and auto_create_table's INFER_SCHEMA isn't supported",
     targets=["fakesnow-server"],
 )
 

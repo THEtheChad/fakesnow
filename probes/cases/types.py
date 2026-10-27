@@ -1,6 +1,6 @@
 """Scalar types: NUMBER precision and scale and how values come back to Python, VARCHAR(n), BOOLEAN, BINARY."""
 
-from probes import UNFILED, Case, Compare, Expected
+from probes import Case, Compare, Expected
 from probes.cases._gaps import DECIMAL_NOT_INT, ERROR_CODES, FLOAT_NUMBERS, SUM_FLOAT
 
 SCALE = Compare(scale=True)
@@ -58,7 +58,7 @@ CASES = [
             "insert into types_vc4 values ('ab', 'cd')",
         ],
         sql="select v, w from types_vc4",
-        expected=Expected([UNFILED], "a VARCHAR(n) column's result metadata gives length 16777216, not n"),
+        expected=Expected(["#485"], "a VARCHAR(n) column's result metadata gives length 16777216, not n"),
     ),
     # --- NUMBER
     Case(
@@ -89,7 +89,7 @@ CASES = [
         setup=NUMBERS,
         sql="select 1 as lit, count(*) as c, max(n) as n from types_num",
         expected=Expected(
-            [UNFILED], "fakesnow reports precision 38 for integer literals and COUNT; Snowflake sizes them (1, 18)"
+            ["#485"], "fakesnow reports precision 38 for integer literals and COUNT; Snowflake sizes them (1, 18)"
         ),
     ),
     Case(
@@ -98,7 +98,7 @@ CASES = [
         compare=SCALE,
         sql="select 1.5, 1.50, 0.1, -12.345",
         expected=Expected(
-            [UNFILED],
+            ["#485"],
             "a literal's trailing zeros count in its scale (1.50 is NUMBER(3,2)); Snowflake drops them (NUMBER(2,1))",
         ),
     ),
@@ -211,7 +211,7 @@ CASES = [
             id=f"types.boolean-{name}",
             description=f"BOOLEAN from {expression}",
             sql=f"select {expression} as value",
-            expected=Expected([UNFILED], "fakesnow can't cast 'off' to BOOLEAN; Snowflake accepts it")
+            expected=Expected(["#489"], "fakesnow can't cast 'off' to BOOLEAN; Snowflake accepts it")
             if name == "off"
             else None,
         )
@@ -229,7 +229,7 @@ CASES = [
         description="BINARY values from TO_BINARY",
         sql="select to_binary('ab', 'hex'), to_binary('hi', 'utf-8')",
         expected=Expected(
-            [UNFILED], "in-process, BINARY comes back as bytes; the connector gives bytearray", targets=["fakesnow"]
+            ["#494"], "in-process, BINARY comes back as bytes; the connector gives bytearray", targets=["fakesnow"]
         ),
         # Expression labels vary; this case checks values/types.
         compare=Compare(names=False),
@@ -245,6 +245,6 @@ CASES = [
         id="types.typeof-system",
         description="SYSTEM$TYPEOF of literals",
         sql="select system$typeof(1), system$typeof(1.5), system$typeof('a'), system$typeof(1.5::float)",
-        expected=Expected([UNFILED], "SYSTEM$TYPEOF isn't implemented"),
+        expected=Expected(["#489"], "SYSTEM$TYPEOF isn't implemented"),
     ),
 ]
