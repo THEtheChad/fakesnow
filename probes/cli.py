@@ -47,7 +47,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="append",
         default=[],
         metavar="PATTERN",
-        help="only cases matching: #<ref>, an id glob, or an id substring",
+        help="only cases matching: a reference (#1, owner/repo#1, unfiled), an id glob, or an id substring",
     )
     parser.add_argument("--markdown", type=Path, metavar="FILE", help="write a Markdown report")
     parser.add_argument("--json", type=Path, metavar="FILE", help="write a JSON report, reusable as a --baseline")

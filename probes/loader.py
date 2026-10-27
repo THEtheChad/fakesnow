@@ -10,7 +10,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from probes.model import Case
+from probes.model import UNFILED, Case
 
 DEFAULT_CASES = Path(__file__).parent / "cases"
 
@@ -63,12 +63,12 @@ def load_cases(paths: Sequence[Path]) -> list[Case]:
 
 
 def select(cases: Sequence[Case], patterns: Sequence[str]) -> list[Case]:
-    """Cases matching any pattern: a reference (#<number>), a glob on the id, or else a substring of the id."""
+    """Cases matching any pattern: a reference (#1, owner/repo#1 or unfiled), an id glob, or else an id substring."""
     if not patterns:
         return list(cases)
 
     def matches(case: Case, pattern: str) -> bool:
-        if pattern.startswith("#"):
+        if "#" in pattern or pattern == UNFILED:
             return pattern in case.all_refs
         if any(c in pattern for c in "*?["):
             return fnmatch.fnmatchcase(case.id, pattern)
