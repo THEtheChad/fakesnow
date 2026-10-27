@@ -19,7 +19,7 @@ def test_case_statements_from_a_string_or_a_list():
         ({"id": "a.b"}, "exactly one of sql or run"),
         ({"id": "a.b", "sql": "select 1", "run": lambda conn, ctx: None}, "exactly one of sql or run"),
         ({"id": "a.b", "sql": "select 1", "setup": "create table t (x int)"}, "setup must be a list"),
-        ({"id": "a.b", "sql": "select 1", "refs": ["473"]}, "should be '#<number>', a URL or 'unfiled'"),
+        ({"id": "a.b", "sql": "select 1", "refs": ["473"]}, "should be '#<number>'"),
     ],
 )
 def test_case_validation(kwargs: dict[str, Any], message: str):
@@ -62,3 +62,9 @@ def test_fingerprint_follows_the_sql():
     assert one.fingerprint() == Case(id="a.c", description="other", sql="select 1").fingerprint()
     assert one.fingerprint() != Case(id="a.b", description="d", sql="select 2").fingerprint()
     assert one.fingerprint() != Case(id="a.b", description="d", sql="select 1", setup=["select 0"]).fingerprint()
+
+
+def test_references_to_other_repos_and_unfiled():
+    case = Case(id="a.b", description="d", sql="select 1", refs=["#1", "tobymao/sqlglot#8804", "https://x.y/z"])
+    assert Expected(["unfiled"], "no issue yet").refs == ["unfiled"]
+    assert case.all_refs == ("#1", "tobymao/sqlglot#8804", "https://x.y/z")

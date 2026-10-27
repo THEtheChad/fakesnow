@@ -19,7 +19,9 @@ ProbeFn = Callable[["SnowflakeConnection", "ProbeContext"], Any]
 """A Python probe: takes the target's connection and a context, returns a value to compare."""
 
 _ID = re.compile(r"[a-z0-9][a-z0-9_.\-]*")
-_REF = re.compile(r"#\d+|https?://\S+|unfiled")
+# an upstream fakesnow issue or PR (#123), another repo's (tobymao/sqlglot#123), a URL, or unfiled
+_REF_FORMS = "'#<number>', 'owner/repo#<number>', a URL or 'unfiled'"
+_REF = re.compile(r"(?:[\w.-]+/[\w.-]+)?#\d+|https?://\S+|unfiled")
 UNFILED = "unfiled"
 """The reference for a difference confirmed against Snowflake that has no upstream issue yet."""
 
@@ -70,7 +72,7 @@ class Expected:
             raise CaseError(f"refs must be a list of references, not a string: {self.refs!r}")
         for ref in self.refs:
             if not _REF.fullmatch(ref):
-                raise CaseError(f"reference {ref!r} should be '#<number>', a URL or 'unfiled'")
+                raise CaseError(f"reference {ref!r} should be {_REF_FORMS}")
         if not self.reason.strip():
             raise CaseError("expected difference needs a reason")
 
@@ -116,7 +118,7 @@ class Case:
                 raise CaseError(f"{self.id}: {name} must be a list, not a string")
         for ref in self.refs:
             if not _REF.fullmatch(ref):
-                raise CaseError(f"{self.id}: reference {ref!r} should be '#<number>', a URL or 'unfiled'")
+                raise CaseError(f"{self.id}: reference {ref!r} should be {_REF_FORMS}")
         expected = self.expectations
         if len({tuple(e.targets) for e in expected}) != len(expected):
             raise CaseError(f"{self.id}: more than one expected difference for the same targets")
