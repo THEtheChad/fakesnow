@@ -11,19 +11,19 @@ CASES = [
     Case(
         id="timestamps.date-trunc-month-date",
         description="DATE_TRUNC('month', <date>) is a DATE",
-        refs=["#471"],
+        refs=["#471", "tobymao/sqlglot#8806"],
         sql="select date_trunc('month', '2024-05-09'::date)",
     ),
     Case(
         id="timestamps.date-trunc-hour-date",
         description="DATE_TRUNC('hour', <date>) is a DATE",
-        refs=["#471"],
+        refs=["#471", "tobymao/sqlglot#8806"],
         sql="select date_trunc('hour', '2024-05-09'::date)",
     ),
     Case(
         id="timestamps.trunc-date-month",
         description="TRUNC(<date>, 'month') is a DATE",
-        refs=["#471"],
+        refs=["#471", "tobymao/sqlglot#8806"],
         sql="select trunc('2024-05-09'::date, 'month')",
     ),
     Case(
@@ -31,7 +31,6 @@ CASES = [
         description="DATE_TRUNC of a bare NULL",
         refs=["#471"],
         sql="select date_trunc('month', null)",
-        expected=Expected(["#471"], "Snowflake types DATE_TRUNC of a bare NULL as TEXT (2), fakesnow as DATE (3)"),
     ),
     Case(
         id="timestamps.date-trunc-string",
@@ -49,10 +48,10 @@ CASES = [
     Case(
         id="timestamps.localtimestamp-type",
         description="LOCALTIMESTAMP is a TIMESTAMP_LTZ like CURRENT_TIMESTAMP",
-        refs=["#480"],
+        refs=["#480", "tobymao/sqlglot#8807"],
         compare=TYPES_ONLY,
         sql="select localtimestamp as l, current_timestamp as c",
-        expected=Expected(["#480"], "fakesnow's LOCALTIMESTAMP is a TIMESTAMP_NTZ (8)"),
+        expected=Expected(["#480", "tobymao/sqlglot#8807"], "fakesnow's LOCALTIMESTAMP is a TIMESTAMP_NTZ (8)"),
     ),
     Case(
         id="timestamps.ltz-tz-ntz-casts",

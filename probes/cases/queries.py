@@ -138,12 +138,16 @@ CASES = [
             "when matched and q_src.v is null then delete when matched then update set v = q_src.v",
             "select id, v from q_tgt order by id",
         ],
+        expected=DECIMAL_NOT_INT,
     ),
     Case(
         id="queries.merge-duplicate-source",
         description="MERGE fails when two source rows update the same target row",
         setup=[*MERGE, "insert into q_src values (1, 'again')"],
         sql="merge into q_tgt using q_src on q_tgt.id = q_src.id when matched then update set v = q_src.v",
+        expected=Expected(
+            [UNFILED], "MERGE doesn't fail when two source rows match one target row (Snowflake: 100090 Duplicate row)"
+        ),
     ),
     Case(
         id="queries.merge-aliases-matched-only",

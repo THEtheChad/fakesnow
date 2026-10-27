@@ -227,12 +227,16 @@ CASES = [
         run=show_columns,
         expected=Expected([UNFILED], "SHOW COLUMNS reports a NOT NULL column as nullable"),
     ),
-    Case(id="ddl.show-schemas", description="SHOW SCHEMAS LIKE finds the run's schema", run=show_schemas),
+    Case(
+        id="ddl.show-schemas",
+        description="SHOW SCHEMAS LIKE finds the run's schema",
+        run=show_schemas,
+        expected=Expected([UNFILED], "SHOW SCHEMAS LIKE ignores the pattern and lists every schema"),
+    ),
     Case(
         id="ddl.describe-table",
         description="DESCRIBE TABLE: name, type, kind, nullability, primary key",
         setup=INFO,
         run=describe_table,
-        expected=Expected([UNFILED], "SHOW SCHEMAS LIKE ignores the pattern and lists every schema"),
     ),
 ]
