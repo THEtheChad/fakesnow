@@ -4,7 +4,7 @@ from typing import Any
 
 from snowflake.connector import DictCursor, SnowflakeConnection
 
-from probes import UNFILED, Case, Expected, ProbeContext
+from probes import UNFILED, Case, Compare, Expected, ProbeContext
 
 INFO = [
     "create or replace table ddl_info (id int not null, name varchar(10), amount number(10,2), "
@@ -47,19 +47,27 @@ CASES = [
     # --- statements and their status rows
     Case(
         id="ddl.create-table-status",
-        description="CREATE TABLE, CREATE TABLE IF NOT EXISTS on an existing table, and DROP TABLE status rows",
-        sql=[
-            "create table ddl_s (x int)",
-            "create table if not exists ddl_s (x int)",
-            "create or replace table ddl_s (x int)",
-            "drop table ddl_s",
-            "drop table if exists ddl_s",
-        ],
-        expected=Expected(
-            [UNFILED],
-            "the status rows of CREATE TABLE IF NOT EXISTS on an existing table and DROP TABLE IF "
-            "EXISTS on a missing one claim it was created / dropped",
-        ),
+        description="CREATE TABLE status row",
+        sql="create or replace table ddl_s (x int)",
+    ),
+    Case(
+        id="ddl.create-existing-table-status",
+        description="CREATE TABLE IF NOT EXISTS reports an existing table",
+        setup=["create or replace table ddl_s (x int)"],
+        sql="create table if not exists ddl_s (x int)",
+        expected=Expected([UNFILED], "CREATE TABLE IF NOT EXISTS claims an existing table was created"),
+    ),
+    Case(
+        id="ddl.drop-table-status",
+        description="DROP TABLE status row",
+        setup=["create or replace table ddl_s (x int)"],
+        sql="drop table ddl_s",
+    ),
+    Case(
+        id="ddl.drop-missing-table-status",
+        description="DROP TABLE IF EXISTS reports a missing table",
+        sql="drop table if exists ddl_missing_status",
+        expected=Expected([UNFILED], "DROP TABLE IF EXISTS claims a missing table was dropped"),
     ),
     Case(
         id="ddl.create-view-status",
@@ -111,6 +119,8 @@ CASES = [
         id="ddl.current-database-schema",
         description="CURRENT_DATABASE and CURRENT_SCHEMA in the run's schema",
         sql="select current_database(), current_schema()",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     # --- quoted names
     Case(
@@ -178,6 +188,7 @@ CASES = [
         setup=INFO,
         sql="select table_catalog, table_schema, table_name, table_type, comment from information_schema.tables "
         "where table_schema = '{schema}' and table_name = 'DDL_INFO'",
+        expected=Expected([UNFILED], "INFORMATION_SCHEMA.TABLES returns the COMMENT column name in lower case"),
     ),
     Case(
         id="ddl.information-schema-columns",

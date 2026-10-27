@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -12,10 +11,8 @@ from snowflake.connector.cursor import SnowflakeCursor
 from probes.compare import Verdict, classify
 from probes.context import ProbeContext
 from probes.model import Case
-from probes.outcome import ErrorInfo, Outcome, Scrub, Step, run_statement, scrub_value, scrubber
+from probes.outcome import ErrorInfo, Outcome, Scrub, Step, redact, run_statement, scrub_error, scrub_value, scrubber
 from probes.targets import SNOWFLAKE, Names, Session, SnowflakeConfig, open_target
-
-_OPENS_TRANSACTION = re.compile(r"\s*(begin|start\s+transaction)\b", re.IGNORECASE)
 
 
 @dataclass
@@ -55,18 +52,19 @@ def run_case(case: Case, session: Session) -> Outcome:
     scrub = scrubber(session.names.placeholders)
     cur = session.conn.cursor()
     try:
-        outcome = _run(case, session, cur, scrub)
-    except Exception:
-        outcome = Outcome(crash=traceback.format_exc(limit=5))
-    teardown = [run_statement(cur, session.names.render(t), t, scrub) for t in case.teardown]
-    notes = [f"teardown failed: {step.sql}: {step.error}" for step in teardown if step.error]
-    try:
-        if any(_OPENS_TRANSACTION.match(sql) for sql in [*case.setup, *case.statements]):
-            # an explicit transaction the case left open (or aborted) would carry over into the next case
-            session.conn.rollback()
+        try:
+            outcome = _run(case, session, cur, scrub)
+        except Exception:
+            outcome = Outcome(crash=scrub(redact(traceback.format_exc(limit=5))))
+    finally:
+        # Teardown also runs on KeyboardInterrupt. Reset before teardown so an aborted transaction
+        # cannot prevent dropping resources. A reset failure makes the run unusable, not a match.
+        session.conn.rollback()
+        session.conn.autocommit(True)
+        teardown = [run_statement(cur, session.names.render(t), t, scrub) for t in case.teardown]
         session.restore()
-    except Exception as e:
-        notes.append(f"couldn't reset the session: {e}")
+        cur.close()
+    notes = [f"teardown failed: {step.sql}: {step.error}" for step in teardown if step.error]
     return replace(outcome, notes=tuple(notes)) if notes else outcome
 
 
@@ -92,12 +90,9 @@ def _run_python(case: Case, session: Session, scrub: Scrub) -> Outcome:
     try:
         value = case.run(session.conn, ctx)
     except Exception as e:
-        return Outcome(error=ErrorInfo.from_exception(e))
+        return Outcome(error=scrub_error(ErrorInfo.from_exception(e), scrub))
     finally:
         ctx.close()
-        # a probe may leave a transaction open or autocommit off
-        session.conn.rollback()
-        session.conn.autocommit(True)
     return Outcome(value=scrub_value(value, scrub))
 
 

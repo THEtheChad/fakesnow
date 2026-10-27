@@ -39,6 +39,8 @@ CASES = [
         description="TRY_CAST of a longer string to VARCHAR(n) is NULL",
         refs=["#473"],
         sql="select try_cast('abcdef' as varchar(5))",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="types.varchar-number-too-long",
@@ -103,13 +105,13 @@ CASES = [
     Case(
         id="types.number-scaled-cast",
         description="Casting to NUMBER(10,2) rounds and keeps the scale",
-        compare=SCALE,
+        compare=Compare(names=False, scale=True),
         sql="select 1::number(10,2), '12.345'::number(10,2), 12.344::number(10,2)",
     ),
     Case(
         id="types.number-division",
         description="Dividing integers gives a NUMBER with Snowflake's division scale",
-        compare=SCALE,
+        compare=Compare(names=False, scale=True),
         sql="select 7/2, 1/3, 10/5",
         expected=FLOAT_NUMBERS,
     ),
@@ -158,21 +160,21 @@ CASES = [
     Case(
         id="types.number-count-min-max",
         description="COUNT, MIN and MAX of integer and decimal columns",
-        compare=SCALE,
+        compare=Compare(names=False, scale=True),
         setup=NUMBERS,
         sql="select count(*), count(i), min(i), max(n) from types_num",
     ),
     Case(
         id="types.number-arithmetic-on-column",
         description="Arithmetic on an INT column stays integral",
-        compare=SCALE,
+        compare=Compare(names=False, scale=True),
         setup=NUMBERS,
         sql="select i + 1, i * 2, i - b from types_num order by i",
     ),
     Case(
         id="types.number-round-trunc",
         description="ROUND and TRUNC with and without a scale",
-        compare=SCALE,
+        compare=Compare(names=False, scale=True),
         sql="select round(2.567, 2), round(2.5), round(-2.5), trunc(2.567, 1)",
         expected=DECIMAL_NOT_INT,
     ),
@@ -180,6 +182,8 @@ CASES = [
         id="types.number-cast-rounds-half-away",
         description="Casting a decimal to an integer rounds half away from zero",
         sql="select 2.5::int, (-2.5)::int, 3.5::int",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="types.number-not-recognized",
@@ -190,7 +194,7 @@ CASES = [
     Case(
         id="types.number-try-to-number",
         description="TRY_TO_NUMBER on good and bad input",
-        compare=SCALE,
+        compare=Compare(names=False, scale=True),
         sql="select try_to_number('abc'), try_to_number('12'), try_to_number('12.5', 10, 1)",
         expected=DECIMAL_NOT_INT,
     ),
@@ -198,14 +202,28 @@ CASES = [
         id="types.float-values",
         description="FLOAT arithmetic and literals",
         sql="select 1.5::float * 2, 1e10::float, 0.1::float + 0.2::float",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     # --- other scalars
-    Case(
-        id="types.boolean-values",
-        description="BOOLEAN literals and casts from strings and numbers",
-        sql="select true, false, 'yes'::boolean, 'off'::boolean, 1::boolean, 0::boolean",
-        expected=Expected([UNFILED], "fakesnow can't cast 'on' or 'off' to BOOLEAN; Snowflake accepts them"),
-    ),
+    *[
+        Case(
+            id=f"types.boolean-{name}",
+            description=f"BOOLEAN from {expression}",
+            sql=f"select {expression} as value",
+            expected=Expected([UNFILED], "fakesnow can't cast 'off' to BOOLEAN; Snowflake accepts it")
+            if name == "off"
+            else None,
+        )
+        for name, expression in (
+            ("true", "true"),
+            ("false", "false"),
+            ("yes", "'yes'::boolean"),
+            ("off", "'off'::boolean"),
+            ("one", "1::boolean"),
+            ("zero", "0::boolean"),
+        )
+    ],
     Case(
         id="types.binary-values",
         description="BINARY values from TO_BINARY",
@@ -213,11 +231,15 @@ CASES = [
         expected=Expected(
             [UNFILED], "in-process, BINARY comes back as bytes; the connector gives bytearray", targets=["fakesnow"]
         ),
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="types.string-unicode-length",
         description="LENGTH counts characters, not bytes",
         sql="select length('héllo'), length('日本')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="types.typeof-system",

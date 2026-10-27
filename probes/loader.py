@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
+import json
 import sys
 import types
 from collections.abc import Iterable, Sequence
@@ -46,7 +47,12 @@ def load_file(path: Path) -> list[Case]:
     cases = getattr(module, "CASES", None)
     if not isinstance(cases, list | tuple) or not all(isinstance(c, Case) for c in cases):
         raise LoadError(f"{path}: should define CASES, a list of probes.Case")
-    return [replace(c, source=str(path)) for c in cases]
+    pins_path = path.parent / "_expected.json"
+    try:
+        pins = json.loads(pins_path.read_text()) if pins_path.exists() else {}
+        return [replace(c, source=str(path), expected_outcomes=pins.get(c.id, c.expected_outcomes)) for c in cases]
+    except (OSError, ValueError, AttributeError) as e:
+        raise LoadError(f"{pins_path}: invalid expectation pins") from e
 
 
 def load_cases(paths: Sequence[Path]) -> list[Case]:

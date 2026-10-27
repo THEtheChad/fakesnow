@@ -27,6 +27,8 @@ CASES = [
         description="ARRAY_TO_STRING of ARRAY_CONSTRUCT_COMPACT drops the NULLs",
         refs=["#466"],
         sql="select array_to_string(array_construct_compact('a', null, 'b'), ', ')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="semis.array-slice-of-compact",
@@ -55,12 +57,14 @@ CASES = [
         refs=["#477"],
         sql="select array_construct(1, 2)",
         expected=Expected(["#477"], _ARRAY_TYPE),
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="semis.formatting",
         description="The raw text of a VARIANT, OBJECT and ARRAY, whitespace included (no normalisation)",
         refs=["#477"],
-        compare=Compare(types=False, normalise=False),
+        compare=Compare(names=False, types=False, normalise=False),
         sql="""select parse_json('{"a": 1, "b": [1, 2]}'), object_construct('k', 1), array_construct(1, 2)""",
         expected=Expected(["#477"], "Snowflake indents JSON text by two spaces, fakesnow returns it compact"),
     ),
@@ -113,6 +117,8 @@ CASES = [
         description="ARRAY_SIZE, ARRAY_CONTAINS and ARRAY_POSITION",
         sql="select array_size(parse_json('[1, 2, 3]')), array_contains(2::variant, array_construct(1, 2)), "
         "array_position(2::variant, array_construct(1, 2))",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="semis.typeof",
@@ -120,6 +126,8 @@ CASES = [
         sql="""select typeof(parse_json('1')), typeof(parse_json('1.5')), typeof(parse_json('"a"')), """
         """typeof(parse_json('[1]')), typeof(parse_json('{"a": 1}')), typeof(parse_json('null'))""",
         expected=Expected([UNFILED], "TYPEOF returns DuckDB's 'JSON' for every VARIANT"),
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="semis.object-keys",

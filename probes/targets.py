@@ -71,7 +71,14 @@ class Names:
 
     @classmethod
     def new(cls, database: str) -> Names:
-        return cls(database, f"PROBES_{time.strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(3).upper()}")
+        return cls(database, f"PROBES_{time.strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(8).upper()}")
+
+    def __post_init__(self) -> None:
+        for name in (self.database, self.schema):
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", name):
+                raise TargetError("probe database/schema names must be simple unquoted SQL identifiers")
+        object.__setattr__(self, "database", self.database.upper())
+        object.__setattr__(self, "schema", self.schema.upper())
 
     def render(self, sql: str) -> str:
         return sql.replace("{database}", self.database).replace("{schema}", self.schema)
@@ -171,25 +178,34 @@ def _snowflake(names: Names, config: SnowflakeConfig) -> Iterator[Session]:
         )
 
     conn = connect()
+    cleanup_needed = False
     try:
         cur = conn.cursor()
         cur.execute("select current_version()")
         row = cur.fetchone()
         version = str(row[0]) if row else "?"
-        # also makes it the current schema
+        # A cancelled request can have created the schema before the connector reports success.
+        cleanup_needed = True
         cur.execute(f"create schema {names.database}.{names.schema}")
-        try:
-            yield Session(
-                SNOWFLAKE,
-                names,
-                conn,
-                lambda: connect(names.schema),
-                {"version": version, "connector": snowflake.connector.__version__},
-            )
-        finally:
-            _drop_run_objects(conn, names)
+        yield Session(
+            SNOWFLAKE,
+            names,
+            conn,
+            lambda: connect(names.schema),
+            {"version": version, "connector": snowflake.connector.__version__},
+        )
     finally:
-        conn.close()
+        try:
+            # Release transaction locks before dropping objects, even if reset/rollback failed.
+            conn.close()
+        finally:
+            if cleanup_needed:
+                # The probe may close/break its connection. Clean up through an independent session.
+                cleanup = connect()
+                try:
+                    _drop_run_objects(cleanup, names)
+                finally:
+                    cleanup.close()
 
 
 def _drop_run_objects(conn: SnowflakeConnection, names: Names) -> None:
@@ -204,6 +220,10 @@ def _drop_run_objects(conn: SnowflakeConnection, names: Names) -> None:
             print(f"warning: couldn't list {kind} to clean up: {e.errno} {e.sqlstate}", file=sys.stderr)
             continue
         for name in found:
+            # SHOW LIKE treats underscores in the generated prefix as wildcards. Never delete a
+            # different run's objects merely because they match that SQL pattern.
+            if not str(name).startswith(names.schema):
+                continue
             quoted = '"' + str(name).replace('"', '""') + '"'
             where = f"{names.database}.{quoted}" if kind == "schemas" else quoted
             statements.append(f"drop {kind[:-1]} if exists {where} cascade")

@@ -1,6 +1,6 @@
 """Query shapes: FLATTEN and LATERAL, window functions and QUALIFY, MERGE, GROUP BY ALL."""
 
-from probes import UNFILED, Case, Expected
+from probes import UNFILED, Case, Compare, Expected
 from probes.cases._gaps import DECIMAL_NOT_INT, SUM_FLOAT
 
 FLAT = [
@@ -77,12 +77,16 @@ CASES = [
         description="RANK and DENSE_RANK with ties",
         setup=WIN,
         sql="select g, v, rank() over (order by v), dense_rank() over (order by v) from q_win order by v, g",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="queries.window-lag-lead",
         description="LAG and LEAD with a default",
         setup=WIN,
         sql="select v, lag(v) over (order by v, g), lead(v, 1, 0) over (order by v, g) from q_win order by v, g",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="queries.window-running-sum",
@@ -92,6 +96,8 @@ CASES = [
         sql="select g, v, sum(v) over (partition by g order by v rows between unbounded preceding and current row) "
         "from q_win order by g, v",
         expected=SUM_FLOAT,
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="queries.window-count-partition",
@@ -99,12 +105,16 @@ CASES = [
         setup=WIN,
         sql="select g, v, count(*) over (partition by g), first_value(v) over (partition by g order by v) "
         "from q_win order by g, v",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="queries.group-by-all",
         description="GROUP BY ALL",
         setup=WIN,
         sql="select g, count(*) from q_win group by all order by g",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="queries.values-clause",

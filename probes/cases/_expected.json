@@ -1,0 +1,475 @@
+{
+  "connector.colliding-generated-column-names": {
+    "fakesnow": "9ca84bf102fe6c755cab4c98bffcb622ef95944a730a952af9e2f2348c3c6ad2"
+  },
+  "connector.duplicate-column-names": {
+    "fakesnow": "4163899ba1b414e5b6eeadd83ea220f252357dddc80002e3020d3e2228398331"
+  },
+  "connector.execute-async": {
+    "fakesnow": "598f6dce0b6cb2c6d83c9a76311490aa063130d4ff7ba52bd9931b35bf5faae5"
+  },
+  "connector.fetch-pandas-all": {
+    "fakesnow": "cd2f53bc4ada1e198cde31750ad53bffce6915857000ce25afbc2049ab6b0875",
+    "fakesnow-server": "cd2f53bc4ada1e198cde31750ad53bffce6915857000ce25afbc2049ab6b0875"
+  },
+  "connector.last-query-id": {
+    "fakesnow": "6c2c5ecbe372bd9004931c65e748e08ee34989a6f851399096fe52cbd81405ce",
+    "fakesnow-server": "6c2c5ecbe372bd9004931c65e748e08ee34989a6f851399096fe52cbd81405ce"
+  },
+  "ddl.create-existing-table-status": {
+    "fakesnow": "35b19c1a76fc9ac721b07101939d4e176325cf4b8689ffa6174695d57d902e68",
+    "fakesnow-server": "35b19c1a76fc9ac721b07101939d4e176325cf4b8689ffa6174695d57d902e68"
+  },
+  "ddl.ctas-types": {
+    "fakesnow": "de08897355754411a8d68ad04b82c9a31e959e67c7fb68e0c963625b0d928117",
+    "fakesnow-server": "de08897355754411a8d68ad04b82c9a31e959e67c7fb68e0c963625b0d928117"
+  },
+  "ddl.database-apostrophe": {
+    "fakesnow": "1037df5e189656c223d800a7771a3951d3fa0179a1c9be268b89c673c13fd26f",
+    "fakesnow-server": "1037df5e189656c223d800a7771a3951d3fa0179a1c9be268b89c673c13fd26f"
+  },
+  "ddl.drop-missing-table-status": {
+    "fakesnow": "538b84d05c50c958fd5222ef62bbc60f8e7c13a5e6eac506a2c3d0c779df6acc",
+    "fakesnow-server": "538b84d05c50c958fd5222ef62bbc60f8e7c13a5e6eac506a2c3d0c779df6acc"
+  },
+  "ddl.file-format-apostrophe": {
+    "fakesnow": "470a682efdcdb32b5c2fb89d931e0ec0aeccf325cb55b565508d96ce5e0007e3",
+    "fakesnow-server": "52e1cc7ab8e9f37d4b901277fed851abe6e1b06699937089e416daec19bbf228"
+  },
+  "ddl.information-schema-tables": {
+    "fakesnow": "26b8f20a075e5031c80027f3d5d8a04fd59c21d279ae393d47abc7f39b4c273c",
+    "fakesnow-server": "26b8f20a075e5031c80027f3d5d8a04fd59c21d279ae393d47abc7f39b4c273c"
+  },
+  "ddl.information-schema-views": {
+    "fakesnow": "79dece34d781fa2496faed7c30b6e54676424d8e953964a4b418eb09d09d1431",
+    "fakesnow-server": "79dece34d781fa2496faed7c30b6e54676424d8e953964a4b418eb09d09d1431"
+  },
+  "ddl.schema-apostrophe": {
+    "fakesnow": "693fe58a2c67409738ec9927dade8e9155c68a2178b1f5fcafcfcc762b3d01ff",
+    "fakesnow-server": "906cc0a8419ba149c3385a8286af8f312ff43c8193729364bee970f941e5f1e1"
+  },
+  "ddl.show-columns": {
+    "fakesnow": "a98a50d73374376e86d568d1875c1958d2addafbfc3a0ff09d61e4efbc56dc8e",
+    "fakesnow-server": "a98a50d73374376e86d568d1875c1958d2addafbfc3a0ff09d61e4efbc56dc8e"
+  },
+  "ddl.show-schemas": {
+    "fakesnow": "f433bd7cbab8d20bafa575cd351c380b61d2ed4f19c1f22472ab3e0f7148adb2",
+    "fakesnow-server": "f433bd7cbab8d20bafa575cd351c380b61d2ed4f19c1f22472ab3e0f7148adb2"
+  },
+  "ddl.show-tables": {
+    "fakesnow": "33d826ca31a117602f8f1eba6f0be0371bdc13de5bf1e7c63720ffd28757b910",
+    "fakesnow-server": "33d826ca31a117602f8f1eba6f0be0371bdc13de5bf1e7c63720ffd28757b910"
+  },
+  "ddl.show-tables-columns": {
+    "fakesnow": "a310614b92b43bcc12ba24b33c2631df2ba080f3347f388d036c96bc69470f37",
+    "fakesnow-server": "a310614b92b43bcc12ba24b33c2631df2ba080f3347f388d036c96bc69470f37"
+  },
+  "ddl.temporary-table-after-use-schema": {
+    "fakesnow": "92cbcfb46de39cdb865e90ed77ee95f6ff371f8ff9cc3a7f0ea8ca4ced8a0935",
+    "fakesnow-server": "92cbcfb46de39cdb865e90ed77ee95f6ff371f8ff9cc3a7f0ea8ca4ced8a0935"
+  },
+  "errors.ambiguous-column": {
+    "fakesnow": "6470a353469e3eea44fe31664b8b0226ebdd19253fc9b6a57ef3bafcdc5c689a",
+    "fakesnow-server": "6470a353469e3eea44fe31664b8b0226ebdd19253fc9b6a57ef3bafcdc5c689a"
+  },
+  "errors.create-existing-table": {
+    "fakesnow": "5b1f3f9d0c58ab5aa231b15ea720c5c8189ec46013bb9a251187fe6ca5226f98",
+    "fakesnow-server": "5b1f3f9d0c58ab5aa231b15ea720c5c8189ec46013bb9a251187fe6ca5226f98"
+  },
+  "errors.division-by-zero": {
+    "fakesnow": "07565a6c29568bc8401777c3686d489f73b4735df70a28f899e4d1bf8a6ad0e9",
+    "fakesnow-server": "07565a6c29568bc8401777c3686d489f73b4735df70a28f899e4d1bf8a6ad0e9"
+  },
+  "errors.insert-bad-number": {
+    "fakesnow": "1161b5d6d91961cef53dbcd78f0deb18244f9b176121a758d4649f584410b89b",
+    "fakesnow-server": "1161b5d6d91961cef53dbcd78f0deb18244f9b176121a758d4649f584410b89b"
+  },
+  "errors.insert-too-many-values": {
+    "fakesnow": "8e8346f21f03ac96b13f36f338aed682cee5fa68941e7892812ff003c1948b5a",
+    "fakesnow-server": "8e8346f21f03ac96b13f36f338aed682cee5fa68941e7892812ff003c1948b5a"
+  },
+  "errors.missing-column": {
+    "fakesnow": "0ac0af2e8599af92263eaa5cc3061673f7d1ee00519d45455e00c5d4cff40f8d",
+    "fakesnow-server": "0ac0af2e8599af92263eaa5cc3061673f7d1ee00519d45455e00c5d4cff40f8d"
+  },
+  "errors.missing-column-in-where": {
+    "fakesnow": "fbf2be88a45f54ba60bbed647066d3391619931e075a038f236398c22c091b15",
+    "fakesnow-server": "fbf2be88a45f54ba60bbed647066d3391619931e075a038f236398c22c091b15"
+  },
+  "errors.missing-database": {
+    "fakesnow": "23512a5aa48213d10e3bb65c3bff3dfe32336ebe61360fcb2e7e8d6d70abf0a1",
+    "fakesnow-server": "23512a5aa48213d10e3bb65c3bff3dfe32336ebe61360fcb2e7e8d6d70abf0a1"
+  },
+  "errors.missing-schema": {
+    "fakesnow": "747b7c5444a2f92696bb7a6c9f91859d7424a1ac8646366a5e539374723a16bd",
+    "fakesnow-server": "747b7c5444a2f92696bb7a6c9f91859d7424a1ac8646366a5e539374723a16bd"
+  },
+  "errors.not-in-group-by": {
+    "fakesnow": "708967d9d9849c7406c0b97a4769a0be7db48c3a549e83c321ab8feb7447a40d",
+    "fakesnow-server": "708967d9d9849c7406c0b97a4769a0be7db48c3a549e83c321ab8feb7447a40d"
+  },
+  "errors.not-null-violation": {
+    "fakesnow": "e1b9f7685dd6f52a70669e9669fa6876ab5927467c039cea8d6ac58550a7bc30",
+    "fakesnow-server": "cf22c3c9a0d5de6219a3776a95b9218cf429e161cc81581505e02520643092e3"
+  },
+  "errors.unknown-function": {
+    "fakesnow": "5d3f8508e370eb39deba9c539f869b1eff6361cd839ae5b65f565b187c0c58ff",
+    "fakesnow-server": "5d3f8508e370eb39deba9c539f869b1eff6361cd839ae5b65f565b187c0c58ff"
+  },
+  "errors.use-missing-database": {
+    "fakesnow": "60c93c745eff46ad6e66c972924ffb1f628d4339e2cb2e964ea554f350cb8212",
+    "fakesnow-server": "60c93c745eff46ad6e66c972924ffb1f628d4339e2cb2e964ea554f350cb8212"
+  },
+  "errors.use-missing-schema": {
+    "fakesnow": "fb2a0ede281706513805a879efba5196310b1185f774bf47d5e6b334988228df",
+    "fakesnow-server": "fb2a0ede281706513805a879efba5196310b1185f774bf47d5e6b334988228df"
+  },
+  "errors.wrong-argument-count": {
+    "fakesnow": "13813a1a45400dfdbc4e774f465daffcb93097397dc21ae512f95e796ee4de1d",
+    "fakesnow-server": "13813a1a45400dfdbc4e774f465daffcb93097397dc21ae512f95e796ee4de1d"
+  },
+  "functions.count-if-bool-agg": {
+    "fakesnow": "8ee0a38350408ac41c1624ab7505c8a1a6f0305ac1eb8f9bd360b4450bda86a4"
+  },
+  "functions.listagg-no-separator": {
+    "fakesnow": "8a9d0a522138bdb8d769145e1de2928e12302e79c6fc24eaf329242de09f79ab",
+    "fakesnow-server": "8a9d0a522138bdb8d769145e1de2928e12302e79c6fc24eaf329242de09f79ab"
+  },
+  "functions.median-mode": {
+    "fakesnow": "1ca8396d0f78f9799371e346fdabdf693fbbda645191e6bb22670af4d3dbaa9e",
+    "fakesnow-server": "1ca8396d0f78f9799371e346fdabdf693fbbda645191e6bb22670af4d3dbaa9e"
+  },
+  "functions.sha2": {
+    "fakesnow": "335685fa0d1ca8243176b8add03eb2056c42735fc6c261f410ce59ac657ec6bf",
+    "fakesnow-server": "335685fa0d1ca8243176b8add03eb2056c42735fc6c261f410ce59ac657ec6bf"
+  },
+  "functions.split": {
+    "fakesnow": "6fbceadbee126c80ba80f1e69a074e1c4f2b63ca6fea125093f1a3928f11ff6e",
+    "fakesnow-server": "6fbceadbee126c80ba80f1e69a074e1c4f2b63ca6fea125093f1a3928f11ff6e"
+  },
+  "functions.to-char-number-format": {
+    "fakesnow": "d52cbd3e582df7436f639759fdc862dfc57867423b86662c4c42b9155df21e11",
+    "fakesnow-server": "d52cbd3e582df7436f639759fdc862dfc57867423b86662c4c42b9155df21e11"
+  },
+  "functions.trim-characters": {
+    "fakesnow": "7669ccc307bd13be6a2dc62698c3b83a2ce461d0fc549ad26666f63cdc08ba53",
+    "fakesnow-server": "7669ccc307bd13be6a2dc62698c3b83a2ce461d0fc549ad26666f63cdc08ba53"
+  },
+  "identifiers.cte-quoted-lower-name-unquoted-reference": {
+    "fakesnow": "9230b842e4c83605eb4d87c871bc243e9c5e0af9ad4ccbced90a2e81b2462e1b",
+    "fakesnow-server": "9230b842e4c83605eb4d87c871bc243e9c5e0af9ad4ccbced90a2e81b2462e1b"
+  },
+  "identifiers.unquoted-alias-quoted-lower-reference": {
+    "fakesnow": "ef6819c09d8ed7ee57bb4c00b9574a7411ed038f702d1d59ce001dc5e30197eb",
+    "fakesnow-server": "ef6819c09d8ed7ee57bb4c00b9574a7411ed038f702d1d59ce001dc5e30197eb"
+  },
+  "keywords.asof.table": {
+    "fakesnow": "f54aa8a3e396d407619f5e2a4a144c6c98410cf6602933e93112b19803a1a1a3",
+    "fakesnow-server": "f54aa8a3e396d407619f5e2a4a144c6c98410cf6602933e93112b19803a1a1a3"
+  },
+  "keywords.concurrently.table": {
+    "fakesnow": "947f946712db8b738941f17745b901ca42ef78fa439e4282005b41e40e7ac324",
+    "fakesnow-server": "947f946712db8b738941f17745b901ca42ef78fa439e4282005b41e40e7ac324"
+  },
+  "keywords.default.column": {
+    "fakesnow": "46f76017aa00a8b3b398ea447267ffb8bf2408d6be87c76062501d792316fe23",
+    "fakesnow-server": "46f76017aa00a8b3b398ea447267ffb8bf2408d6be87c76062501d792316fe23"
+  },
+  "keywords.exclude.column": {
+    "fakesnow": "c017e26467dbdb3865c88cd8d8fc89c91f37d68304565ec2569b0f583ae36d83",
+    "fakesnow-server": "c017e26467dbdb3865c88cd8d8fc89c91f37d68304565ec2569b0f583ae36d83"
+  },
+  "keywords.glob.column": {
+    "fakesnow": "3179c93a86d20a0be81061cae8a8adea1a295226e069e1e5dbae07da85e42683",
+    "fakesnow-server": "3179c93a86d20a0be81061cae8a8adea1a295226e069e1e5dbae07da85e42683"
+  },
+  "keywords.glob.table": {
+    "fakesnow": "ea9e02f868983151d4145acdf79499d8bf75be494d3e21d6cf06ef1cbdf61bae",
+    "fakesnow-server": "ea9e02f868983151d4145acdf79499d8bf75be494d3e21d6cf06ef1cbdf61bae"
+  },
+  "keywords.ilike.column": {
+    "fakesnow": "3631244bb4acb12366bf7ac5cec4587cb4ac42425f0fb01965f79ccdfe04da80",
+    "fakesnow-server": "3631244bb4acb12366bf7ac5cec4587cb4ac42425f0fb01965f79ccdfe04da80"
+  },
+  "keywords.install.column": {
+    "fakesnow": "77ee834626d283ab94127e2e9e5da7d59ed7ae005b4acc2baf163a8b86fea0bc",
+    "fakesnow-server": "a14162abb1438e35e9ea20f718db21b199b64281fb1f1db441796f6a4f8b74d8"
+  },
+  "keywords.install.table": {
+    "fakesnow": "424af8ffacfe9141696bf3fae85cecaa2c9d72fdc7ead405d2a77194e9d77bc4",
+    "fakesnow-server": "1ec64ca42370027ea1b93305cd3c3b106b415f42a8ef9573af5d381038c1e59d"
+  },
+  "keywords.lateral.column": {
+    "fakesnow": "f098270d45d5ba022e84c4d9e484842587287e1476d677428e31e149886e5303",
+    "fakesnow-server": "f098270d45d5ba022e84c4d9e484842587287e1476d677428e31e149886e5303"
+  },
+  "keywords.lateral.table": {
+    "fakesnow": "98e6d96b033def37517a467980d0fdf0e059653184a1a7a6e2d2765797012052",
+    "fakesnow-server": "98e6d96b033def37517a467980d0fdf0e059653184a1a7a6e2d2765797012052"
+  },
+  "keywords.qualify.column": {
+    "fakesnow": "722a878e79811a4ef08edd48db8e04026af4edd2ca57c67ea9afe83fe5506a65",
+    "fakesnow-server": "722a878e79811a4ef08edd48db8e04026af4edd2ca57c67ea9afe83fe5506a65"
+  },
+  "keywords.returning.column": {
+    "fakesnow": "237f1298918f1e5dec6af2e1225a337d7e531e8b070670d3db71e9b122a16586",
+    "fakesnow-server": "237f1298918f1e5dec6af2e1225a337d7e531e8b070670d3db71e9b122a16586"
+  },
+  "keywords.returning.table": {
+    "fakesnow": "f6d09872356f68f8b95623e950b1db1d8f0b261416e803f8354c033c684f3d76",
+    "fakesnow-server": "f6d09872356f68f8b95623e950b1db1d8f0b261416e803f8354c033c684f3d76"
+  },
+  "keywords.row.column": {
+    "fakesnow": "eca8cb5a33d357c9f1452d16a6b9756114ad81d9545f7a0bdcd67b4c132847f2",
+    "fakesnow-server": "eca8cb5a33d357c9f1452d16a6b9756114ad81d9545f7a0bdcd67b4c132847f2"
+  },
+  "keywords.row.table": {
+    "fakesnow": "06398858f1a84ed73cdcdc98732db6fea4b8c0c0a79219a1ba6f243ecadf1ce2",
+    "fakesnow-server": "06398858f1a84ed73cdcdc98732db6fea4b8c0c0a79219a1ba6f243ecadf1ce2"
+  },
+  "keywords.rows.column": {
+    "fakesnow": "02eeafb20e176b0917ed9be92303c655eaca0b25cb1d011facd6101e8d273de5",
+    "fakesnow-server": "02eeafb20e176b0917ed9be92303c655eaca0b25cb1d011facd6101e8d273de5"
+  },
+  "keywords.rows.table": {
+    "fakesnow": "f9e297880f3d1ec65ccdd9fe6739647d1429b6e2320d77d1ce0fd391ad8313a2",
+    "fakesnow-server": "f9e297880f3d1ec65ccdd9fe6739647d1429b6e2320d77d1ce0fd391ad8313a2"
+  },
+  "keywords.sample.column": {
+    "fakesnow": "e340e9a1f43c778ca738ce0234a84407c0784485a83dc1059dd0c9b594cb62a0",
+    "fakesnow-server": "e340e9a1f43c778ca738ce0234a84407c0784485a83dc1059dd0c9b594cb62a0"
+  },
+  "keywords.tablesample.column": {
+    "fakesnow": "0588cb48d99bbe95a2f4a09c6d97227af8861b32c74b7aeb0c0adad7ae2e0c85",
+    "fakesnow-server": "0588cb48d99bbe95a2f4a09c6d97227af8861b32c74b7aeb0c0adad7ae2e0c85"
+  },
+  "keywords.try_cast.column": {
+    "fakesnow": "0a4554e2d2c558dd3795587760a802c60597b69964e43b194037592708dcc460",
+    "fakesnow-server": "0a4554e2d2c558dd3795587760a802c60597b69964e43b194037592708dcc460"
+  },
+  "keywords.union.column": {
+    "fakesnow": "8f8f51f6c8e27bdb4a1714c34782db31eb1e5658b72c3864328f830947767a1d",
+    "fakesnow-server": "8f8f51f6c8e27bdb4a1714c34782db31eb1e5658b72c3864328f830947767a1d"
+  },
+  "keywords.using.column": {
+    "fakesnow": "9021666ad48749c563f9bee2791c69b085a3daa63775be83d5ed7cc1112a8a3f",
+    "fakesnow-server": "9021666ad48749c563f9bee2791c69b085a3daa63775be83d5ed7cc1112a8a3f"
+  },
+  "keywords.using.table": {
+    "fakesnow": "7d89a06ec0cd22be36a6cfae6c953ce813ff10a261509f45ba4f6da5c82c4141",
+    "fakesnow-server": "7d89a06ec0cd22be36a6cfae6c953ce813ff10a261509f45ba4f6da5c82c4141"
+  },
+  "queries.flatten-all-columns": {
+    "fakesnow": "9124df201826cebcd86f91cd7f9a9989ee878e5bbd164eebfb71510322b620d6",
+    "fakesnow-server": "9124df201826cebcd86f91cd7f9a9989ee878e5bbd164eebfb71510322b620d6"
+  },
+  "queries.flatten-nested-path": {
+    "fakesnow": "117821dddae843cf1a0b942fc2f45cd39f2c55f712df9e69027df88303a9f503",
+    "fakesnow-server": "117821dddae843cf1a0b942fc2f45cd39f2c55f712df9e69027df88303a9f503"
+  },
+  "queries.lateral-flatten-outer": {
+    "fakesnow": "c246128e26d2187328dd3a5ce046cdb0016ca9ef3d3fdc26dca5350bac7b72f9",
+    "fakesnow-server": "c246128e26d2187328dd3a5ce046cdb0016ca9ef3d3fdc26dca5350bac7b72f9"
+  },
+  "queries.merge-aliases-matched-only": {
+    "fakesnow": "813647e6fca05ed0a87337d6c8b89d18e746a4d1b1351b221aeb56ebd4bf0120",
+    "fakesnow-server": "813647e6fca05ed0a87337d6c8b89d18e746a4d1b1351b221aeb56ebd4bf0120"
+  },
+  "queries.merge-delete": {
+    "fakesnow": "23f903149c038da24fb1b893f568c54ce7037c5620d60722b992ef5edc138c49"
+  },
+  "queries.merge-duplicate-source": {
+    "fakesnow": "d5fa20fa6a444d8b91338d554d69839dde41104d8d23131df91a46661a529151",
+    "fakesnow-server": "7c90f55ba71ae41679a9933d55ea44bb747d346b16b07099c064d3d798e2e3ec"
+  },
+  "queries.merge-update-insert": {
+    "fakesnow": "6d3fc0e859ca24eb630e635a6a2c51e366eb4480fa569252df81feff9bce9c64"
+  },
+  "queries.window-running-sum": {
+    "fakesnow": "2cb558268f9698e4d9c2983b7c170884b76417d89b1e58646b9da2462dfcf77f",
+    "fakesnow-server": "2cb558268f9698e4d9c2983b7c170884b76417d89b1e58646b9da2462dfcf77f"
+  },
+  "semis.array-construct-aliased": {
+    "fakesnow": "2b52400a6f4e7a1b20bc3a933fbeb20faa061c533ab11e385d5b1188ff8a2961",
+    "fakesnow-server": "7206390c1298b1dc2bfbde3203583cb4c65dd0d71336d7c044977553b70710bd"
+  },
+  "semis.array-construct-unaliased": {
+    "fakesnow": "b8223b9cf81247f1bceca66f6979d32dda8154d001e7780e8a109958eb1bc80d",
+    "fakesnow-server": "b8223b9cf81247f1bceca66f6979d32dda8154d001e7780e8a109958eb1bc80d"
+  },
+  "semis.array-slice-direct": {
+    "fakesnow": "272643c1fbd83ac9c994bc4e0f6c4b0f9954b3597eda91b471a29981447100ff",
+    "fakesnow-server": "bcc117255d9c2b9c74888635226c5d92bc0f56094a0a9bc2db6eb9c604c58a76"
+  },
+  "semis.array-slice-of-compact": {
+    "fakesnow": "c5cb4988e8d91d153a70aa066497a1af432979ffdbd5dada1a0d9be08b7dbc94",
+    "fakesnow-server": "366f1720e5247c0e37d0e0a8b6dbcc6172d07bdf2a9b0a83312f0119597f9940"
+  },
+  "semis.constructed-type-codes": {
+    "fakesnow": "a8d155450d2031d211d347d77eb6729602718dae6aa9cd4ad983a6429d361fc3",
+    "fakesnow-server": "a8d155450d2031d211d347d77eb6729602718dae6aa9cd4ad983a6429d361fc3"
+  },
+  "semis.formatting": {
+    "fakesnow": "81a184883d8880bd8d302bd2fed391afad5da2a28c94adc9b138a3705453a9f2",
+    "fakesnow-server": "81a184883d8880bd8d302bd2fed391afad5da2a28c94adc9b138a3705453a9f2"
+  },
+  "semis.object-construct-key-order": {
+    "fakesnow": "3953cb990c67a9d3c7b9a49db5e0a35f95cf71dad7002a9178612a596f1aa048",
+    "fakesnow-server": "3953cb990c67a9d3c7b9a49db5e0a35f95cf71dad7002a9178612a596f1aa048"
+  },
+  "semis.object-keys": {
+    "fakesnow": "620d7b36e74e6af84c8303ddd7ae6206227597c553d5818ef3a3ff1d21f6bf00",
+    "fakesnow-server": "525b1f647f1a45298225f6299128e55cc422d9d698d782820aef2087a5d2061c"
+  },
+  "semis.parse-json-invalid": {
+    "fakesnow": "033149f948f1822a58236a5957d3dd8c1d265d99e5c37ed76baae62d5c9ee514",
+    "fakesnow-server": "3ff726abb4b12ed2fe3e3b7a61aa6897f8b8aa10b5b05adec80137f6784ee97c"
+  },
+  "semis.result-type-codes": {
+    "fakesnow": "296a2cb417adb03363850844eaa7a813634793c8dd4414c3cebedc301d6449fb",
+    "fakesnow-server": "296a2cb417adb03363850844eaa7a813634793c8dd4414c3cebedc301d6449fb"
+  },
+  "semis.string-to-variant": {
+    "fakesnow": "ec3e9585fd191daaa3b9408d54f62d95b6c5fbd74474d6b0a98fc650767fc0c2",
+    "fakesnow-server": "ec3e9585fd191daaa3b9408d54f62d95b6c5fbd74474d6b0a98fc650767fc0c2"
+  },
+  "semis.typeof": {
+    "fakesnow": "48e184af82868bfe5579077885adcd0e80d58920408ef41428b80bdf985602f4",
+    "fakesnow-server": "48e184af82868bfe5579077885adcd0e80d58920408ef41428b80bdf985602f4"
+  },
+  "semis.variant-comparison": {
+    "fakesnow": "6eb927891540fe7f61dd390f3e744bd7c97a09f09147841c30386e71d38c4f44",
+    "fakesnow-server": "6eb927891540fe7f61dd390f3e744bd7c97a09f09147841c30386e71d38c4f44"
+  },
+  "stages.drop-missing": {
+    "fakesnow": "e3ac177c5ec30cdbb58f05209853cc88e0d25bd83bf985decd870394db2f7a51",
+    "fakesnow-server": "e3ac177c5ec30cdbb58f05209853cc88e0d25bd83bf985decd870394db2f7a51"
+  },
+  "stages.put": {
+    "fakesnow": "6fb599c282d58c900dd7559ee7f178433e51b68b7868b307dff8e89484a81a5e"
+  },
+  "stages.select-from-stage": {
+    "fakesnow": "2740af6581214088197212d6d9c7ffb513a532461276d6029a5f849f48ea5020",
+    "fakesnow-server": "2740af6581214088197212d6d9c7ffb513a532461276d6029a5f849f48ea5020"
+  },
+  "timestamps.date-to-varchar-default": {
+    "fakesnow": "11ddafab9a614f6630dce48ec829a74c2fa4a7fd97f2737262fc69dfc82de501",
+    "fakesnow-server": "11ddafab9a614f6630dce48ec829a74c2fa4a7fd97f2737262fc69dfc82de501"
+  },
+  "timestamps.date-trunc-string": {
+    "fakesnow": "fbe97ba662eb78bc6a01dd3d09cd317f070a1f9e47cd35fdce6b2aa8be187b5a",
+    "fakesnow-server": "fbe97ba662eb78bc6a01dd3d09cd317f070a1f9e47cd35fdce6b2aa8be187b5a"
+  },
+  "timestamps.localtimestamp-type": {
+    "fakesnow": "f66475a91a062e4e3e9bb92eb81a8a22d1cdf2e1df2c000910b5a410fd32de0a",
+    "fakesnow-server": "f66475a91a062e4e3e9bb92eb81a8a22d1cdf2e1df2c000910b5a410fd32de0a"
+  },
+  "timestamps.null-timestamps": {
+    "fakesnow": "39b01980e5905182d769ce07566e04a7ef37969032682235f05de4fdc5c97907"
+  },
+  "timestamps.timestamp-plus-interval": {
+    "fakesnow": "82f1c8554585e97e0d6d45fb2ce2ae1b1e39094466f14ea90f3d7a75dd278331",
+    "fakesnow-server": "82f1c8554585e97e0d6d45fb2ce2ae1b1e39094466f14ea90f3d7a75dd278331"
+  },
+  "timestamps.to-char-month-name": {
+    "fakesnow": "87ffb384c128c305415d08d4dce4ace15bcee89560a2afcedf9127255a554964",
+    "fakesnow-server": "87ffb384c128c305415d08d4dce4ace15bcee89560a2afcedf9127255a554964"
+  },
+  "timestamps.to-date-invalid": {
+    "fakesnow": "6a02979a33067d866353af5fe7dfe6866c8ac6fdf64d64acfba19c6d600825a6",
+    "fakesnow-server": "6a02979a33067d866353af5fe7dfe6866c8ac6fdf64d64acfba19c6d600825a6"
+  },
+  "timestamps.tz-offset-kept": {
+    "fakesnow": "66e4703ecd906b005dcd79f5b4415e85543941ab3b6ddee32561c6d8f5912df8",
+    "fakesnow-server": "66e4703ecd906b005dcd79f5b4415e85543941ab3b6ddee32561c6d8f5912df8"
+  },
+  "timestamps.tz-to-varchar": {
+    "fakesnow": "9e0d56cd0cef237a0a8a1f63f7bf2f6719a9b283e09716b6cc5c73147cecdf44",
+    "fakesnow-server": "9e0d56cd0cef237a0a8a1f63f7bf2f6719a9b283e09716b6cc5c73147cecdf44"
+  },
+  "transactions.current-transaction": {
+    "fakesnow": "dcc53e464b262a8c38087aaa8a7db25ee562d977420f2efde948c215467efdf6",
+    "fakesnow-server": "dcc53e464b262a8c38087aaa8a7db25ee562d977420f2efde948c215467efdf6"
+  },
+  "transactions.ddl-commits-open-transaction": {
+    "fakesnow": "3787c0f8777fad506e78120056ff62d73c8ae3bc326c3aa1038ca56cde424492",
+    "fakesnow-server": "104a485b3fc8497d24ed6dfa9713e9d05d9c575d594a55cacbc9eb196cd3b043"
+  },
+  "transactions.runtime-error-mid-transaction": {
+    "fakesnow": "654cad9a6a3027c5a71a4ccfda82e8286e56dff9e2559d91d36e4a0051d0af16",
+    "fakesnow-server": "71a2c260758e82925fdffe0ef32fdf09f1430c4ae66fc0f50aaca6e89d239246"
+  },
+  "types.binary-values": {
+    "fakesnow": "3208c22489c7744cb94ce661ade978c879200a2faa3324016d12c0bafdc86c53"
+  },
+  "types.boolean-off": {
+    "fakesnow": "a6d901a0f30a31a91800407bce88edc2343cd6730c00c6294d2cad409ccd149b",
+    "fakesnow-server": "a6d901a0f30a31a91800407bce88edc2343cd6730c00c6294d2cad409ccd149b"
+  },
+  "types.number-avg": {
+    "fakesnow": "dc39eb95ce2c72fb690122420851ff0f41079ac2c88b4b177afbeb95face9b40",
+    "fakesnow-server": "dc39eb95ce2c72fb690122420851ff0f41079ac2c88b4b177afbeb95face9b40"
+  },
+  "types.number-big-cast": {
+    "fakesnow": "be12c32ee47c890d7ae9c60588681c1d55e733641bd15b9a2c3c22656aea2fb1",
+    "fakesnow-server": "be12c32ee47c890d7ae9c60588681c1d55e733641bd15b9a2c3c22656aea2fb1"
+  },
+  "types.number-big-insert": {
+    "fakesnow": "3eb100882a0c1b55e4a1d062b34fe005a3d78b43f95bf51bf860d6b6a8f2fad8",
+    "fakesnow-server": "3eb100882a0c1b55e4a1d062b34fe005a3d78b43f95bf51bf860d6b6a8f2fad8"
+  },
+  "types.number-decimal-literals": {
+    "fakesnow": "5e9e69c5ca83805ffaa45fb90691a74a10701c22db6942aa8da2c6cc078abd5a",
+    "fakesnow-server": "5e9e69c5ca83805ffaa45fb90691a74a10701c22db6942aa8da2c6cc078abd5a"
+  },
+  "types.number-division": {
+    "fakesnow": "adfff4369c689f887946d0d013740b79528a5b2a8acf1390bcc6ddf36616996d",
+    "fakesnow-server": "adfff4369c689f887946d0d013740b79528a5b2a8acf1390bcc6ddf36616996d"
+  },
+  "types.number-not-recognized": {
+    "fakesnow": "c42c8ce356be7bbbcf126265442cb06722be9f234c62decc74cbd9ac0bf92bcf",
+    "fakesnow-server": "c42c8ce356be7bbbcf126265442cb06722be9f234c62decc74cbd9ac0bf92bcf"
+  },
+  "types.number-precision-metadata": {
+    "fakesnow": "da1eaea595c8c0f89523dd3daef94b50f1ee8d3c8966e74a08c6fd8622f4df1b",
+    "fakesnow-server": "da1eaea595c8c0f89523dd3daef94b50f1ee8d3c8966e74a08c6fd8622f4df1b"
+  },
+  "types.number-round-trunc": {
+    "fakesnow": "cbdb52c017a485e0e1021a4fd70a86cd2c7320a3adc1a9177af0261146962fa0"
+  },
+  "types.number-sum-decimal-column": {
+    "fakesnow": "e00ba91d8573231a3689e50ebd733b00720eef75110d7290ee9f204a3503878a",
+    "fakesnow-server": "e00ba91d8573231a3689e50ebd733b00720eef75110d7290ee9f204a3503878a"
+  },
+  "types.number-sum-int-column": {
+    "fakesnow": "97bd4df919b346d54fa9db84510d88664289ff7dffb162c52c9dcbbba4fa6c43",
+    "fakesnow-server": "97bd4df919b346d54fa9db84510d88664289ff7dffb162c52c9dcbbba4fa6c43"
+  },
+  "types.number-sum-int-subquery": {
+    "fakesnow": "86791fcbe542dd018cc880c7856129e01cacd174ad250e786c9903112763aa42",
+    "fakesnow-server": "86791fcbe542dd018cc880c7856129e01cacd174ad250e786c9903112763aa42"
+  },
+  "types.number-try-to-number": {
+    "fakesnow": "531860bf9069367b26756fe9148207b14ab0ea853c181d88661167c0bd328388"
+  },
+  "types.typeof-system": {
+    "fakesnow": "5b39715f0302b4386a2f72fbaf2f01c0edf763b6302148ba11721ca438e13a11",
+    "fakesnow-server": "5b39715f0302b4386a2f72fbaf2f01c0edf763b6302148ba11721ca438e13a11"
+  },
+  "types.varchar-length-metadata": {
+    "fakesnow": "38324c172659aca4faa60cacca64fc3f3e92802787e383019969a772c14055f3",
+    "fakesnow-server": "38324c172659aca4faa60cacca64fc3f3e92802787e383019969a772c14055f3"
+  },
+  "write-pandas.auto-create-types": {
+    "fakesnow-server": "033787f5dd83fded1a9de2188c8732e25685e0996d1c5ba315dc3c3124d41683"
+  },
+  "write-pandas.into-existing-table": {
+    "fakesnow-server": "27146e8c7e2ff18fb43492cf0dccea5698a482fc38e68498e82d9c8908551f5e"
+  },
+  "write-pandas.lower-case-auto-create": {
+    "fakesnow-server": "e6ea257387d75b4898fbe35dcf9bf2c4227a0fb8ef9038eda8c1a9998549561f"
+  },
+  "write-pandas.lower-column-into-upper-table": {
+    "fakesnow-server": "7aa9b9fc8d75c56bb3ce969a19f8f78d34202bb15261eeed227d2b37fa0233c9"
+  }
+}

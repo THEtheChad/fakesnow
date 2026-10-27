@@ -1,8 +1,11 @@
 import datetime
 import decimal
+from dataclasses import replace
+
+import pytest
 
 from probes import Case, Compare, Expected
-from probes.compare import Status, classify, comparable, diff
+from probes.compare import Status, classify, comparable, comparison_fingerprint, diff
 from probes.outcome import Column, ErrorInfo, Outcome, ResultSet, Step
 
 TEXT, VARIANT, FIXED = 2, 5, 0
@@ -22,10 +25,10 @@ def error(errno: int | None, sqlstate: str | None = None, message: str = "m") ->
 # --- normalisation
 
 
-def test_aware_datetimes_compare_as_instants():
+def test_aware_datetimes_preserve_offsets():
     utc = datetime.datetime(2024, 1, 1, 10, tzinfo=datetime.UTC)
     plus2 = datetime.datetime(2024, 1, 1, 12, tzinfo=datetime.timezone(datetime.timedelta(hours=2)))
-    assert comparable(utc, NORMALISE) == comparable(plus2, NORMALISE)
+    assert comparable(utc, NORMALISE) != comparable(plus2, NORMALISE)
     assert comparable(utc, STRICT) != comparable(plus2, STRICT)
 
 
@@ -69,10 +72,10 @@ def test_type_codes_differ():
     assert diff(Compare(types=False), result((1,), types=(FIXED,)), result((1,), types=(TEXT,))) == []
 
 
-def test_names_are_compared_only_when_asked():
+def test_names_are_compared_by_default():
     a, b = result((1,), names=("ABC",)), result((1,), names=("abc",))
-    assert diff(NORMALISE, a, b) == []
-    assert diff(Compare(names=True), a, b) == ["step 1: names ['ABC'] vs ['abc']"]
+    assert diff(Compare(names=False), a, b) == []
+    assert diff(NORMALISE, a, b) == ["step 1: names ['ABC'] vs ['abc']"]
 
 
 def test_rows_differ():
@@ -120,7 +123,7 @@ def test_classify_statuses():
     same, other = result((1,)), result((2,))
     assert classify(CASE, same, same, "fakesnow", with_expected=True).status is Status.MATCH
     assert classify(CASE, same, other, "fakesnow", with_expected=True).status is Status.UNEXPECTED
-    assert classify(EXPECTED, same, other, "fakesnow", with_expected=True).status is Status.EXPECTED
+    assert classify(EXPECTED, same, other, "fakesnow", with_expected=True).status is Status.UNEXPECTED
     assert classify(EXPECTED, same, same, "fakesnow", with_expected=True).status is Status.NOW_MATCHES
 
 
@@ -148,3 +151,81 @@ def test_classify_candidate_crash_is_an_error():
 
 def test_status_fails():
     assert {s for s in Status if s.fails} == {Status.UNEXPECTED, Status.ERROR}
+
+
+# Each regression below isolates one comparison behavior, including both SQL and nested Python results.
+@pytest.mark.parametrize("flag", ["scale", "precision"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_result_metadata_flags_apply_to_python_and_sql(flag: str, nested: bool):
+    a = ResultSet((Column("X", 0, 10, 2),), ())
+    b = ResultSet((Column("X", 0, 38, 0),), ())
+    left = Outcome(value={"result": a}) if nested else Outcome(steps=(Step("select", result=a),))
+    right = Outcome(value={"result": b}) if nested else Outcome(steps=(Step("select", result=b),))
+    assert diff(Compare(**{flag: True}), left, right)
+    assert not diff(Compare(), left, right)
+
+
+def test_nested_results_always_compare_column_count():
+    a = Outcome(value=ResultSet((Column("X", 0),), ()))
+    b = Outcome(value=ResultSet((), ()))
+    assert diff(Compare(types=False, names=False, rows=False), a, b)
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_uncoded_exception_kinds_are_distinct(nested: bool):
+    a = ErrorInfo("NotImplementedError", None, None, "x")
+    b = ErrorInfo("AttributeError", None, None, "x", database_error=False)
+    left = Outcome(value=a) if nested else Outcome(error=a)
+    right = Outcome(value=b) if nested else Outcome(error=b)
+    assert diff(Compare(), left, right)
+
+
+def test_python_error_during_reference_sql_is_a_harness_error():
+    reference = Outcome(steps=(Step("select", error=ErrorInfo("ValueError", None, None, "x", False)),))
+    assert classify(CASE, reference, reference, "fakesnow", with_expected=True).status is Status.ERROR
+
+
+@pytest.mark.parametrize("change", ["candidate", "reference", "case", "compare"])
+def test_expected_pin_rejects_changed_behavior(change: str):
+    reference, candidate = result((1,)), result((2,))
+    case = replace(EXPECTED, expected_outcomes={"fakesnow": comparison_fingerprint(EXPECTED, reference, candidate)})
+    assert classify(case, reference, candidate, "fakesnow", with_expected=True).status is Status.EXPECTED
+    if change == "candidate":
+        candidate = result((3,))
+    elif change == "reference":
+        reference = result((4,))
+    elif change == "case":
+        case = replace(case, sql="select changed")
+    else:
+        case = replace(case, compare=Compare(names=False))
+    assert classify(case, reference, candidate, "fakesnow", with_expected=True).status is Status.UNEXPECTED
+
+
+def test_pin_includes_values_beyond_display_truncation():
+    reference, candidate = result(("a" * 500,)), result(("b" * 500,))
+    changed = result(("b" * 500 + "new regression",))
+    assert comparison_fingerprint(CASE, reference, candidate) != comparison_fingerprint(CASE, reference, changed)
+
+
+def test_rows_preserve_order_and_duplicate_count():
+    assert diff(Compare(), result((1,), (2,)), result((2,), (1,)))
+    assert diff(Compare(), result((1,), (1,)), result((1,)))
+
+
+def test_json_string_escape_spelling_is_preserved():
+    assert diff(Compare(), result(('"\\u0061"',), types=(VARIANT,)), result(('"a"',), types=(VARIANT,)))
+
+
+def test_captured_python_bug_on_reference_is_an_error():
+    reference = Outcome(value={"result": ErrorInfo("AttributeError", None, None, "bad API", False)})
+    assert classify(CASE, reference, reference, "fakesnow", with_expected=True).status is Status.ERROR
+
+
+def test_python_mapping_preserves_column_order():
+    assert diff(Compare(), Outcome(value={"A": 1, "B": 2}), Outcome(value={"B": 2, "A": 1}))
+
+
+def test_connector_exception_class_is_compared_with_matching_codes():
+    a = Outcome(error=ErrorInfo("ProgrammingError", 1003, "42000", "x"))
+    b = Outcome(error=ErrorInfo("DataError", 1003, "42000", "x"))
+    assert diff(Compare(), a, b)

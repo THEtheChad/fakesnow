@@ -6,7 +6,7 @@ import ast
 import hashlib
 import inspect
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -36,17 +36,17 @@ class Compare:
 
     rows: result rows, after the normalisations in probes.compare.
     types: each column's type code.
-    names: each column's name. Off by default: fakesnow names unaliased expressions differently.
+    names: each column's name. On by default: names affect DictCursor and dataframe callers.
     scale: each column's scale: it decides whether a NUMBER comes back as int or Decimal.
     precision: each column's precision, and a text or binary column's length.
-    error_codes: errno and sqlstate when a statement fails.
+    error_codes: errno, sqlstate and exception class when a statement fails.
     error_message: the error message too. Off by default: messages are rarely word for word.
     normalise: apply the normalisations in probes.compare; off compares Python values as returned.
     """
 
     rows: bool = True
     types: bool = True
-    names: bool = False
+    names: bool = True
     scale: bool = False
     precision: bool = False
     error_codes: bool = True
@@ -104,6 +104,8 @@ class Case:
     refs: Sequence[str] = ()
     compare: Compare = Compare()
     expected: Expected | Sequence[Expected] | None = None
+    expected_outcomes: Mapping[str, str] = field(default_factory=dict[str, str])
+    """Target -> reviewed comparison fingerprint, inline or loaded from _expected.json beside the cases."""
     source: str = field(default="", compare=False)
 
     def __post_init__(self) -> None:
@@ -119,6 +121,11 @@ class Case:
         for ref in self.refs:
             if not _REF.fullmatch(ref):
                 raise CaseError(f"{self.id}: reference {ref!r} should be {_REF_FORMS}")
+        if not isinstance(self.expected_outcomes, Mapping) or any(
+            not isinstance(target, str) or not isinstance(pin, str) or not re.fullmatch(r"[0-9a-f]{64}", pin)
+            for target, pin in self.expected_outcomes.items()
+        ):
+            raise CaseError(f"{self.id}: expected_outcomes must map targets to 64-character SHA256 fingerprints")
         expected = self.expectations
         if len({tuple(e.targets) for e in expected}) != len(expected):
             raise CaseError(f"{self.id}: more than one expected difference for the same targets")

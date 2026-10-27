@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import datetime
 import decimal
+import os
 import re
 import zoneinfo
 from collections.abc import Callable
@@ -14,8 +15,20 @@ from typing import Any
 import snowflake.connector.errors
 from snowflake.connector.constants import FIELD_ID_TO_NAME
 from snowflake.connector.cursor import SnowflakeCursor
+from snowflake.connector.secret_detector import SecretDetector
 
 _CODES_PREFIX = re.compile(r"^\d{6} \([0-9A-Za-z/]{2,5}\): ")
+
+
+def redact(text: str) -> str:
+    """Remove configured credentials and connector-recognised tokens from diagnostics."""
+    keys = ("ACCOUNT", "PASSWORD", "PRIVATE_KEY_FILE", "PRIVATE_KEY_FILE_PWD", "HOST")
+    secrets = [os.environ.get(f"PROBES_SNOWFLAKE_{key}", "") for key in keys]
+    for secret in sorted(filter(None, secrets), key=len, reverse=True):
+        text = text.replace(secret, "[redacted]")
+    masked = SecretDetector.mask_secrets(text)
+    _, message, error = masked
+    return message if message is not None and error is None else "[redacted diagnostic]"
 
 
 @dataclass(frozen=True)
@@ -34,12 +47,12 @@ class ErrorInfo:
         if isinstance(e, snowflake.connector.errors.Error):
             # the connector puts the codes in front of the message too: they're kept apart here
             message = _CODES_PREFIX.sub("", (e.msg or str(e)).strip())
-            return cls(type(e).__name__, e.errno, e.sqlstate, message)
+            return cls(type(e).__name__, e.errno, e.sqlstate, redact(message))
         # fakesnow raises NotImplementedError for what it doesn't support, and lets some DuckDB and sqlglot errors
         # through: both are fakesnow's answer to the statement. Anything else is a bug in the probe.
         module = type(e).__module__.lstrip("_")
         database_error = isinstance(e, NotImplementedError) or module.startswith(("duckdb", "sqlglot"))
-        return cls(type(e).__name__, None, None, str(e).strip(), database_error)
+        return cls(type(e).__name__, None, None, redact(str(e).strip()), database_error)
 
     def __str__(self) -> str:
         codes = f"{self.errno} ({self.sqlstate})" if self.errno is not None else "no errno"
@@ -130,19 +143,35 @@ def scrub_value(value: Any, scrub: Scrub) -> Any:
         return items if isinstance(value, list) else tuple(items)
     if isinstance(value, dict):
         return {scrub_value(k, scrub): scrub_value(v, scrub) for k, v in value.items()}
+    if isinstance(value, ResultSet):
+        return ResultSet(
+            tuple(Column(scrub(c.name), c.type_code, c.precision, c.scale, c.internal_size) for c in value.columns),
+            tuple(tuple(scrub_value(v, scrub) for v in row) for row in value.rows),
+        )
     if isinstance(value, ErrorInfo):
         return scrub_error(value, scrub)
     return value
 
 
 def scrubber(names: dict[str, str]) -> Scrub:
-    """Replace each name (matched whole and case-insensitively) with its placeholder, e.g. {schema}."""
+    """Replace each name (matched whole, retaining casing differences) with its placeholder, e.g. {schema}."""
     if not names:
         return lambda s: s
     alternatives = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
     pattern = re.compile(rf"(?<![A-Za-z0-9_$])({alternatives})(?![A-Za-z0-9$])", re.IGNORECASE)
     lookup = {n.upper(): p for n, p in names.items()}
-    return lambda s: pattern.sub(lambda m: lookup[m.group(1).upper()], s)
+
+    def replace_name(match: re.Match[str]) -> str:
+        name = match[0]
+        placeholder = lookup[name.upper()]
+        if name == name.upper():
+            return placeholder
+        if name == name.lower():
+            return placeholder[:-1] + ":lower}"
+        # Preserve unusual mixed casing rather than masking a behavior change.
+        return name
+
+    return lambda s: pattern.sub(replace_name, s)
 
 
 # --- JSON encoding: plain JSON for str, int, float, bool, None and lists; everything else is tagged
