@@ -11,6 +11,7 @@ from duckdb import DuckDBPyConnection
 from sqlglot import Expr, exp
 
 from fakesnow import info_schema
+from fakesnow.dialect import FakesnowDuckDB
 from fakesnow.params import MutableParams, pop_qmark_param
 from fakesnow.temporary_tables import TemporaryTables
 from fakesnow.variables import Variables
@@ -1599,7 +1600,7 @@ def create_table_as(expression: Expr, duck_conn: DuckDBPyConnection) -> Expr:
 
         if any(isinstance(expr, exp.Star) for expr in select_query.expressions):
             # convert SELECT * to SELECT <col1>, <col2>, ...
-            duck_conn.execute(f"DESCRIBE {select_query}")
+            duck_conn.execute(f"DESCRIBE {select_query.sql(dialect=FakesnowDuckDB)}")
             select_query.set(
                 "expressions",
                 [exp.Column(this=exp.Identifier(this=col[0], quoted=False)) for col in duck_conn.fetchall()],
