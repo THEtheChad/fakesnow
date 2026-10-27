@@ -13,18 +13,24 @@ CASES = [
         description="DATE_TRUNC('month', <date>) is a DATE",
         refs=["#471", "tobymao/sqlglot#8806"],
         sql="select date_trunc('month', '2024-05-09'::date)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.date-trunc-hour-date",
         description="DATE_TRUNC('hour', <date>) is a DATE",
         refs=["#471", "tobymao/sqlglot#8806"],
         sql="select date_trunc('hour', '2024-05-09'::date)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.trunc-date-month",
         description="TRUNC(<date>, 'month') is a DATE",
         refs=["#471", "tobymao/sqlglot#8806"],
         sql="select trunc('2024-05-09'::date, 'month')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.date-trunc-null",
@@ -43,6 +49,8 @@ CASES = [
         id="timestamps.date-trunc-timestamp",
         description="DATE_TRUNC of a TIMESTAMP_NTZ keeps the type",
         sql="select date_trunc('day', '2024-05-09 10:11:12'::timestamp_ntz), date_trunc('week', '2024-05-09'::date)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     # --- timestamp types
     Case(
@@ -88,6 +96,8 @@ CASES = [
         refs=["#465"],
         sql="select null::timestamp_ntz, null::timestamp_ltz, null::timestamp_tz",
         expected=DUPLICATE_NAMES,
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.tz-offset-kept",
@@ -106,17 +116,23 @@ CASES = [
         id="timestamps.ntz-fraction",
         description="TIMESTAMP_NTZ with nanoseconds comes back with microseconds",
         sql="select '2024-01-01 10:00:00.123456789'::timestamp_ntz",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.convert-timezone",
         description="CONVERT_TIMEZONE of a TIMESTAMP_NTZ, with source and target zones",
         sql="select convert_timezone('UTC', 'America/New_York', '2024-01-01 12:00:00'::timestamp_ntz)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.timestamp-plus-interval",
         description="Adding an INTERVAL to a TIMESTAMP_NTZ and a DATE",
         sql="select '2024-01-01 00:00:00'::timestamp_ntz + interval '1 day', '2024-01-31'::date + interval '1 month'",
         expected=Expected([UNFILED], "DATE + INTERVAL is a TIMESTAMP_NTZ in fakesnow, a DATE in Snowflake"),
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     # --- date functions
     Case(
@@ -124,11 +140,15 @@ CASES = [
         description="DATEADD by day, month (end of month) and hour",
         sql="select dateadd(day, 1, '2024-01-31'::date), dateadd(month, 1, '2024-01-31'::date), "
         "dateadd(hour, 1, '2024-01-01 00:00:00'::timestamp_ntz)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.dateadd-string",
         description="DATEADD on a date string",
         sql="select dateadd(day, 1, '2024-01-31')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.datediff",
@@ -137,16 +157,22 @@ CASES = [
         "datediff(month, '2024-01-31'::date, '2024-02-01'::date), "
         "datediff(year, '2023-12-31'::date, '2024-01-01'::date), "
         "datediff(hour, '2024-01-01 10:59:00'::timestamp_ntz, '2024-01-01 11:00:00'::timestamp_ntz)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.last-day",
         description="LAST_DAY of the month and of the year",
         sql="select last_day('2024-02-10'::date), last_day('2024-02-10'::date, 'year')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.to-date-formats",
         description="TO_DATE with no format, DD/MM/YYYY and YYYYMMDD",
         sql="select to_date('2024-05-09'), to_date('09/05/2024', 'DD/MM/YYYY'), to_date('20240509', 'YYYYMMDD')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.to-date-invalid",
@@ -158,29 +184,46 @@ CASES = [
         id="timestamps.try-to-date",
         description="TRY_TO_DATE of a string that isn't a date is NULL",
         sql="select try_to_date('not a date'), try_to_date('2024-05-09')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.to-timestamp-formats",
         description="TO_TIMESTAMP with no format and with DD/MM/YYYY HH24:MI",
         sql="select to_timestamp('2024-05-09 10:11:12'), to_timestamp('09/05/2024 10:11', 'DD/MM/YYYY HH24:MI')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.date-parts",
         description="YEAR, MONTH, DAY, DAYOFWEEK and DAYOFYEAR of a date",
         sql="select year(d), month(d), day(d), dayofweek(d), dayofyear(d), quarter(d) "
         "from (select '2024-05-09'::date as d)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="timestamps.extract-epoch",
         description="EXTRACT of hour and epoch seconds from a TIMESTAMP_NTZ",
         sql="select extract(hour from '2024-05-09 10:11:12'::timestamp_ntz), "
         "extract(epoch_second from '2024-05-09 10:11:12'::timestamp_ntz)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
-        id="timestamps.to-char-formats",
-        description="TO_CHAR of a date and a timestamp with formats",
-        sql="select to_char('2024-05-09'::date, 'YYYY-MM-DD'), "
-        "to_char('2024-05-09 10:11:12'::timestamp_ntz, 'HH24:MI'), to_char('2024-05-09'::date, 'DD Mon YYYY')",
+        id="timestamps.to-char-date",
+        description="TO_CHAR formats a date with YYYY-MM-DD",
+        sql="select to_char('2024-05-09'::date, 'YYYY-MM-DD') as value",
+    ),
+    Case(
+        id="timestamps.to-char-time",
+        description="TO_CHAR formats timestamp hours and minutes",
+        sql="select to_char('2024-05-09 10:11:12'::timestamp_ntz, 'HH24:MI') as value",
+    ),
+    Case(
+        id="timestamps.to-char-month-name",
+        description="TO_CHAR formats an abbreviated month name",
+        sql="select to_char('2024-05-09'::date, 'DD Mon YYYY') as value",
         expected=Expected([UNFILED], "TO_CHAR's Mon format element isn't translated"),
     ),
     Case(
@@ -188,5 +231,7 @@ CASES = [
         description="A date and a TIMESTAMP_NTZ cast to VARCHAR in the default output format",
         sql="select '2024-05-09'::date::varchar, '2024-05-09 10:11:12'::timestamp_ntz::varchar",
         expected=Expected([UNFILED], "a TIMESTAMP_NTZ cast to VARCHAR lacks Snowflake's default milliseconds ('.000')"),
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
 ]

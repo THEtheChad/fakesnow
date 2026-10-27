@@ -4,7 +4,7 @@ from typing import Any
 
 from snowflake.connector import SnowflakeConnection
 
-from probes import UNFILED, Case, Expected, ProbeContext
+from probes import UNFILED, Case, Compare, Expected, ProbeContext
 
 T = ["create or replace table txn_t (n int)"]
 
@@ -143,5 +143,7 @@ CASES = [
         id="transactions.new-session-current-schema",
         description="A new session opened in the run's schema reports it as current",
         run=new_session_current_schema,
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
 ]

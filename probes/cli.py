@@ -6,12 +6,14 @@ import argparse
 import sys
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import snowflake.connector.errors
 
 from probes.loader import DEFAULT_CASES, LoadError, load_cases, select
 from probes.model import Case
+from probes.outcome import redact
 from probes.report import load_run, markdown, recorded_database, summary, write_json
 from probes.runner import Report, TargetRun, compare_runs, run_target
 from probes.targets import FAKESNOW, FAKESNOW_SERVER, SNOWFLAKE, TARGETS, Names, SnowflakeConfig, TargetError
@@ -51,6 +53,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--markdown", type=Path, metavar="FILE", help="write a Markdown report")
     parser.add_argument("--json", type=Path, metavar="FILE", help="write a JSON report, reusable as a --baseline")
+    parser.add_argument(
+        "--strict-metadata", action="store_true", help="compare column names, scale and precision/length for every case"
+    )
     parser.add_argument("--list", action="store_true", help="list the selected cases and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="print each case as it runs")
     return parser.parse_args(argv)
@@ -61,8 +66,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         cases = select(load_cases(args.paths or [DEFAULT_CASES]), args.patterns)
     except LoadError as e:
-        print(f"error: {e}", file=sys.stderr)
+        print(f"error: {redact(str(e))}", file=sys.stderr)
         return 2
+    if args.strict_metadata:
+        cases = [replace(c, compare=replace(c.compare, names=True, scale=True, precision=True)) for c in cases]
     if args.list:
         for case in cases:
             print(f"{case.id:<48} {', '.join(case.all_refs):<14} {case.description}")
@@ -78,7 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         report = run(cases, args.reference, targets, args.baseline, args.verbose)
     except (TargetError, ValueError, OSError, snowflake.connector.errors.Error) as e:
-        print(f"error: {e}", file=sys.stderr)
+        print(f"error: {redact(str(e))}", file=sys.stderr)
         return 2
 
     print(summary(report))

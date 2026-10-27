@@ -4,6 +4,7 @@ import zoneinfo
 from typing import Any
 
 import duckdb
+import pytest
 import snowflake.connector.errors
 
 from probes.outcome import Column, ErrorInfo, Outcome, ResultSet, Step, decode, encode, scrub_value, scrubber
@@ -31,10 +32,10 @@ def test_error_info_other_errors_are_the_probes():
     assert (info.kind, info.errno, info.database_error) == ("AttributeError", None, False)
 
 
-def test_scrubber_replaces_whole_names_case_insensitively():
+def test_scrubber_preserves_casing_differences():
     scrub = scrubber({"PROBES_1_ABC": "{schema}", "DB": "{database}"})
     assert scrub("Object 'DB.PROBES_1_ABC.T' does not exist") == "Object '{database}.{schema}.T' does not exist"
-    assert scrub("probes_1_abc_S2 and DBX") == "{schema}_S2 and DBX"
+    assert scrub("probes_1_abc_S2 and DBX") == "{schema:lower}_S2 and DBX"
 
 
 def test_scrub_value_recurses():
@@ -80,3 +81,17 @@ def test_encode_decode_outcome():
         notes=("a note",),
     )
     assert decode(encode(outcome)) == outcome
+
+
+def test_nested_resultset_names_are_scrubbed():
+    value = ResultSet((Column("PROBES_ABC", 2),), (("PROBES_ABC",),))
+    assert scrub_value({"result": value}, scrubber({"PROBES_ABC": "{schema}"})) == {
+        "result": ResultSet((Column("{schema}", 2),), (("{schema}",),))
+    }
+
+
+def test_exception_diagnostics_redact_configured_secrets(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("PROBES_SNOWFLAKE_PASSWORD", "sentinel-password")
+    monkeypatch.setenv("PROBES_SNOWFLAKE_PRIVATE_KEY_FILE_PWD", "sentinel-passphrase")
+    info = ErrorInfo.from_exception(ValueError("failed using sentinel-password and sentinel-passphrase"))
+    assert "sentinel" not in info.message

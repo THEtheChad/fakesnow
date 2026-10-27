@@ -67,3 +67,18 @@ def test_the_shipped_cases_load():
     cases = load_cases([DEFAULT_CASES])
     assert len(cases) > 300
     assert len(select(cases, ["keywords.*"])) == 144
+
+
+def test_load_reviewed_expectation_sidecar(tmp_path: Path):
+    path = tmp_path / "cases.py"
+    path.write_text('from probes import Case\nCASES = [Case(id="a.b", description="d", sql="select 1")]')
+    (tmp_path / "_expected.json").write_text('{"a.b": {"fakesnow": "' + "a" * 64 + '"}}')
+    assert load_cases([path])[0].expected_outcomes == {"fakesnow": "a" * 64}
+
+
+def test_invalid_expectation_sidecar_is_load_error(tmp_path: Path):
+    path = tmp_path / "cases.py"
+    path.write_text('from probes import Case\nCASES = [Case(id="a.b", description="d", sql="select 1")]')
+    (tmp_path / "_expected.json").write_text('{"a.b": {"fakesnow": "not-a-fingerprint"}}')
+    with pytest.raises(LoadError, match="invalid expectation pins"):
+        load_cases([path])

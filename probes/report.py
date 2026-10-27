@@ -81,7 +81,20 @@ def summary(report: Report) -> str:
         for case, target, v in found:
             detail = v.differences[0].splitlines()[0] if v.differences else ", ".join(e for e in case.all_refs)
             lines.append(f"  {target:<16} {case.id}: {show(detail, 160)}")
+    lines += ["", comparison_scope(report)]
     return "\n".join(lines)
+
+
+def comparison_scope(report: Report) -> str:
+    omitted = {
+        name: sum(not getattr(c.compare, name) for c in report.cases)
+        for name in ("rows", "types", "names", "scale", "precision", "error_codes", "error_message")
+    }
+    return (
+        "Comparison scope: checks disabled in cases: "
+        + ", ".join(f"{name}={count}" for name, count in omitted.items() if count)
+        + ". A match covers only enabled checks; use --strict-metadata to check all column metadata."
+    )
 
 
 # --- Markdown
@@ -95,6 +108,8 @@ def markdown(report: Report) -> str:
         f"Run {time.strftime('%Y-%m-%d %H:%M %Z')}: {len(report.cases)} cases, "
         f"reference {describe_target(report.reference)}, "
         f"compared with {', '.join(describe_target(r) for r in report.candidates)}.",
+        "",
+        comparison_scope(report),
         "",
         "| target | match | unexpected | expected | now matches | error |",
         "|---|---|---|---|---|---|",
@@ -239,6 +254,7 @@ def to_json(report: Report) -> dict[str, Any]:
                     target: {
                         "status": v.status.value,
                         "differences": list(v.differences),
+                        "fingerprint": v.fingerprint,
                         **(
                             {"expected": {"refs": list(v.expected.refs), "reason": v.expected.reason}}
                             if v.expected

@@ -12,7 +12,10 @@ with the repo's pytest suite and don't need Snowflake.
 
 ## Running
 
-From a fakesnow checkout with its virtualenv:
+From a fakesnow checkout, run `make install` (Python 3.11+ and uv required), then
+`export PATH="$PWD/.venv/bin:$PATH"`. The dev environment includes the server and pandas dependencies.
+For another project's cases, run from this checkout or put it on `PYTHONPATH`; installing the fakesnow wheel
+alone does not install `probes`.
 
 ```sh
 # fakesnow in-process against fakesnow's server: no Snowflake needed
@@ -34,6 +37,7 @@ python -m probes -k unfiled --list
 | `PATH ...` | case files or directories (default: `probes/cases`) |
 | `--reference` | `snowflake` (default), `fakesnow` or `fakesnow-server` |
 | `--target` | repeatable; default `fakesnow` and `fakesnow-server` |
+| `--strict-metadata` | compare column names, scale and precision/length for every case (also works with a baseline) |
 | `--baseline JSON` | take the reference's outcomes from an earlier `--json` report |
 | `-k PATTERN` | repeatable; `#123`, `owner/repo#123` or `unfiled` match references, `*?[` make an id glob, anything else is an id substring |
 | `--markdown FILE`, `--json FILE` | reports; the terminal always gets a summary |
@@ -59,19 +63,23 @@ in your shell for other tools aren't picked up by accident:
 | `PROBES_SNOWFLAKE_PRIVATE_KEY_FILE_PWD` | the key's passphrase, if any |
 | `PROBES_SNOWFLAKE_PASSWORD`, `PROBES_SNOWFLAKE_AUTHENTICATOR` | other auth |
 
-Secrets never reach the output: the terminal shows the user, role, warehouse, database and auth method, and the
-reports show only Snowflake's version.
+Connection parameters are excluded from reports. Diagnostics redact configured account/host, password,
+key-file path/passphrase and connector-recognised tokens. Cases are trusted Python/SQL: do not put secrets
+in case source, returned data or SQL literals, which are intentionally included in reports.
 
 Each run creates `<database>.PROBES_<timestamp>_<random>` (which becomes the current schema) and drops it at the
-end, also on failure, along with any schema or database whose name starts with the run's schema (that's how
+end, also on exceptions and KeyboardInterrupt, using an independent cleanup connection, along with any
+schema or database whose name starts with the literal run schema prefix (that's how
 cases name anything they create outside it). Snowflake sessions get `TIMEZONE = 'UTC'` (fakesnow's zone),
 `STATEMENT_TIMEOUT_IN_SECONDS = 60` and `QUERY_TAG = 'fakesnow-probes'`. fakesnow runs in a database of the
-same name, so names in outcomes line up.
+same name, so names in outcomes line up. Database names must be simple unquoted SQL identifiers.
+Cleanup requires a working Snowflake connection; process termination or network/account outages can still
+require manual cleanup of the printed run schema.
 
 ### Cost
 
-A full run is a few hundred statements on a few rows each: about three minutes against an X-Small warehouse,
-most of it round trips and metadata. Keep it that way:
+A full run is a few hundred cases on a few rows each, plus setup/reset/cleanup statements: typically a few
+minutes against an X-Small warehouse, most of it round trips and metadata. Keep it that way:
 
 - one behaviour per case, a handful of statements, a few rows: no generators of thousands of rows, no loops of
   statements;
@@ -86,8 +94,8 @@ For each case and fakesnow target:
 | status | meaning | fails the run |
 |---|---|---|
 | match | same outcome as the reference | no |
-| unexpected difference | differs, and isn't marked | yes |
-| expected difference | differs, and is marked as a known difference | no |
+| unexpected difference | differs without a mark, has no reviewed fingerprint, or the pinned behavior changed | yes |
+| expected difference | differs, and both outcomes match the reviewed fingerprint for this target | no |
 | expected difference now matches | marked, but matches: a fix landed, remove the mark | no |
 | error | the case can't be judged: its setup or Python probe failed on the reference, the harness crashed, or (with `--baseline`) the case is new or changed since the recorded run | yes |
 
@@ -121,10 +129,19 @@ prefixed with the area, since cases in a run share its schema. SQL may use `{dat
 anything created outside the run's schema starting with `{schema}`, and drop it in `teardown` (statements always
 run after the case, errors ignored).
 
-`Compare` fields: `rows`, `types` (type codes) and `error_codes` (errno and SQLSTATE) are on by default;
-`names` (column names, off because fakesnow names unaliased expressions differently), `scale`, `precision`
-(precision, or a text column's length) and `error_message` are off; `normalise=False` turns the normalisations
-below off.
+`Compare` fields: `rows`, `types` (type codes), `names` (column names), and `error_codes` (errno and SQLSTATE)
+are on by default. Built-in expression-value cases explicitly use `names=False` where generated labels differ;
+projects using DictCursor/dataframes should keep names enabled. `scale`, `precision` (precision or text/binary
+length), and exact `error_message` are off by default. These omissions can hide metadata or message differences:
+a **match means only the enabled checks match**, not full connector equivalence. Every report lists omitted
+checks. Use `--strict-metadata` to override metadata omissions without changing cases. Existing pins then stop
+applying because the comparison contract changed. `normalise=False` preserves raw JSON formatting too.
+
+Rows are always compared in order, including duplicate multiplicity. Use SQL `ORDER BY` for deterministic
+results; there is no implicit set/multiset sorting. Python mappings retain insertion order too. Python-returned
+`ResultSet` values use the same flags as SQL. Exceptions compare their class and whether they originated
+in the database, so a probe bug cannot
+silently match an unsupported-operation error.
 
 ### Python probes
 
@@ -158,19 +175,42 @@ behaviour, not the case's. Give a reference and the reason in a few words:
 `Expected(..., targets=["fakesnow"])` limits a mark to one target, e.g. a gap only in-process. A case can have
 one mark per set of targets. Shared reasons live in `cases/_gaps.py`.
 
+### Pinning an expected outcome
+
+An `Expected` reference/reason alone **never accepts a difference**. After inspecting a live run's Markdown
+and complete JSON outcomes, copy that target verdict's `fingerprint` from the JSON report into `_expected.json`
+beside your case files (or the case's `expected_outcomes` mapping):
+
+```json
+{
+  "my-project.case-id": {
+    "fakesnow": "<64-character fingerprint from the reviewed verdict>",
+    "fakesnow-server": "<that target's fingerprint>"
+  }
+}
+```
+
+Commit this file with the cases. The fingerprint covers the case definition, comparison flags, and complete
+compared data on **both** Snowflake and the candidate, without report truncation. A changed value, error,
+setup failure, number/order of rows, or enabled metadata check becomes unexpected. Disabled checks and
+normalised formatting are excluded. A complete fix still reports `expected difference now matches`.
+Never regenerate pins blindly to make a run green: inspect changed outcomes and update the reason/reference
+as needed. Python case module edits invalidate that module's pins; editing this sidecar does not.
+
 ## Normalisations
 
 Kept to differences in Python representation that aren't differences in behaviour; each is documented in
 `probes/compare.py`:
 
-1. Timezone-aware datetimes are compared as instants (offsets aren't compared; `timestamps.tz-offset-kept`
-   compares them with `normalise=False`). A naive datetime never equals an aware one.
+1. Timezone-aware datetimes compare their instant and UTC offset, regardless of tzinfo class.
+   A naive datetime never equals an aware one.
 2. The text of VARIANT, OBJECT and ARRAY columns (by Snowflake's type code) is compared as JSON tokens, so
    whitespace doesn't count (Snowflake indents, fakesnow doesn't; upstream's tests normalise the same way).
    Key order and how numbers are written still count. `semis.formatting` keeps the raw text visible.
 3. Run-specific names (the run's database and schema) become `{database}` and `{schema}` when outcomes are
-   captured, so outcomes from different runs compare. This replaces any identical name, e.g. a role named
-   like the database.
+   captured, so outcomes from different runs compare. Uppercase names become those placeholders; lowercase
+   names become `{schema:lower}` or `{database:lower}`, and mixed casing stays literal, so a changed identifier
+   case remains visible. This replaces any identical name, e.g. a role named like the database.
 
 Nothing else: `1`, `1.0` and `Decimal('1')` are different results, as are `bytes` and `bytearray`, because
 callers' code behaves differently with them (#199). No int/Decimal normalisation turned out to be needed: every
@@ -215,7 +255,8 @@ Their files import `probes` like the ones here. Tables a query needs go in `setu
 ## Limitations
 
 - A recorded outcome is reused only for the same case: its SQL, or for a Python probe its whole module (parsed,
-  so formatting and comments don't count).
+  so formatting and comments don't count). Imported helpers and dependency versions are not fingerprinted;
+  regenerate live baselines and review pins when those change.
 - `fakesnow.server()` can only be called once per process (importing `fakesnow.server` shadows the function),
   so probes keeps a reference to it from import time.
 - Runs are sequential, one target after another, in one session per target (plus any a probe opens).

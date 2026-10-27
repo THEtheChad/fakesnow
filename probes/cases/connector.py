@@ -5,7 +5,7 @@ from typing import Any
 
 from snowflake.connector import DictCursor, SnowflakeConnection
 
-from probes import UNFILED, Case, Expected, ProbeContext
+from probes import UNFILED, Case, Compare, Expected, ProbeContext
 from probes.cases._gaps import DUPLICATE_NAMES
 
 
@@ -80,8 +80,16 @@ CASES = [
     Case(
         id="connector.duplicate-column-names",
         description="A result with two columns of the same name keeps both",
-        sql=["select 1 as a, 2 as a", "select null::timestamp_ltz, null::timestamp_tz"],
+        sql="select 1 as a, 2 as a",
         expected=DUPLICATE_NAMES,
+    ),
+    Case(
+        id="connector.colliding-generated-column-names",
+        description="Different Snowflake expressions that generate identical DuckDB column names keep both values",
+        sql="select null::timestamp_ltz, null::timestamp_tz",
+        expected=DUPLICATE_NAMES,
+        # This case checks lost values; generated labels are a separate difference.
+        compare=Compare(names=False),
     ),
     Case(
         id="connector.execute-async",

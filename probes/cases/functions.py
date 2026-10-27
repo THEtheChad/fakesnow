@@ -1,6 +1,6 @@
 """Scalar and aggregate functions: conditionals, strings, LISTAGG."""
 
-from probes import UNFILED, Case, Expected
+from probes import UNFILED, Case, Compare, Expected
 from probes.cases._gaps import DECIMAL_NOT_INT, FLOAT_NUMBERS, SEMI_TYPES
 
 NAMES = [
@@ -14,28 +14,38 @@ CASES = [
         id="functions.iff",
         description="IFF with true, false and NULL conditions",
         sql="select iff(1 > 0, 'y', 'n'), iff(1 < 0, 'y', 'n'), iff(null, 'y', 'n')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.nvl-family",
         description="NVL, NVL2, IFNULL, COALESCE, NULLIF and ZEROIFNULL",
         sql="select nvl(null, 1), nvl2(null, 'a', 'b'), nvl2(1, 'a', 'b'), ifnull(null, 'x'), coalesce(null, null, 3), "
         "nullif(1, 1), zeroifnull(null)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.decode",
         description="DECODE matches values (NULL matches NULL), with and without a default",
         sql="select decode(2, 1, 'one', 2, 'two', 'other'), decode(null, null, 'null matched', 'no'), "
         "decode(3, 1, 'one')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.case-mixed-types",
         description="CASE with integer and decimal branches",
         sql="select case when true then 1 else 1.5 end, case when false then 1 end",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.equal-null",
         description="EQUAL_NULL and IS DISTINCT FROM",
         sql="select equal_null(null, null), equal_null(1, null), null is distinct from null, 1 is distinct from null",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     # --- strings
     Case(
@@ -43,6 +53,8 @@ CASES = [
         description="SPLIT_PART with positive, negative and out-of-range parts",
         sql="select split_part('a,b,c', ',', 2), split_part('a,b,c', ',', -1), split_part('a,b,c', ',', 5), "
         "split_part('a,b,c', ',', 0)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.split",
@@ -55,24 +67,32 @@ CASES = [
         description="REGEXP_SUBSTR: first match, second occurrence, no match, and a group",
         sql="select regexp_substr('abc123def456', '[0-9]+'), regexp_substr('abc123def456', '[0-9]+', 1, 2), "
         "regexp_substr('abc', 'z'), regexp_substr('a1b2', '([a-z])([0-9])', 1, 2, 'e', 2)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.regexp-replace-like",
         description="REGEXP_REPLACE, REGEXP_LIKE and RLIKE",
         sql="select regexp_replace('a1b2', '[0-9]', 'X'), regexp_like('abc', 'a.c'), rlike('abc', 'b'), "
         "regexp_count('a1b2c3', '[0-9]')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.listagg",
         description="LISTAGG ... WITHIN GROUP, skipping NULLs",
         setup=NAMES,
         sql="select g, listagg(s, ',') within group (order by s) from f_names group by g order by g",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.listagg-distinct",
         description="LISTAGG(DISTINCT ...)",
         setup=NAMES,
         sql="select listagg(distinct s, '|') within group (order by s) from f_names where g = 1",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.listagg-no-separator",
@@ -80,6 +100,8 @@ CASES = [
         setup=NAMES,
         sql="select listagg(s) within group (order by s) from f_names where g = 1",
         expected=Expected([UNFILED], "LISTAGG without a separator joins with ','; Snowflake with ''"),
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.concat-null",
@@ -90,12 +112,16 @@ CASES = [
         id="functions.concat-ws-null",
         description="CONCAT_WS with a NULL argument is NULL",
         sql="select concat_ws('-', 'a', null, 'b'), concat_ws('-', 'a', 'b')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.case-and-trim",
         description="UPPER, LOWER, INITCAP, TRIM, LPAD and RPAD",
         sql="select upper('aB'), lower('aB'), initcap('hello wORLD'), trim('  x  '), "
         "lpad('5', 3, '0'), rpad('5', 3, '*')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.trim-characters",
@@ -107,22 +133,30 @@ CASES = [
         id="functions.substrings",
         description="SUBSTR, SUBSTRING with a negative start, LEFT and RIGHT",
         sql="select substr('hello', 2, 3), substring('hello', -3), left('hello', 2), right('hello', 2)",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.position-contains",
         description="POSITION, CHARINDEX with a start, CONTAINS, STARTSWITH and ENDSWITH",
         sql="select position('l' in 'hello'), charindex('l', 'hello', 4), contains('hello', 'ell'), "
         "startswith('hello', 'he'), endswith('hello', 'lo')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.replace-repeat-reverse",
         description="REPLACE, REPEAT, REVERSE and TRANSLATE",
         sql="select replace('aXbX', 'X', '-'), repeat('ab', 2), reverse('abc'), translate('abc', 'ab', 'xy')",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.like-ilike",
         description="LIKE, ILIKE, LIKE ANY and an escape",
         sql="select 'Abc' like 'a%', 'Abc' ilike 'a%', 'abc' like any ('x%', 'a%'), 'a_c' like 'a\\\\_c'",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.to-varchar-numbers",
@@ -153,22 +187,30 @@ CASES = [
         sql="select count_if(x > 1), booland_agg(x > 0), boolor_agg(x > 2) "
         "from (select column1 as x from values (1), (2))",
         expected=DECIMAL_NOT_INT,
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.min-by-max-by",
         description="MIN_BY and MAX_BY",
         setup=NAMES,
         sql="select min_by(s, g), max_by(s, g) from f_names where s is not null",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.median-mode",
         description="MEDIAN and MODE of integers",
         sql="select median(x), mode(x) from (select column1 as x from values (1), (2), (2), (4))",
         expected=FLOAT_NUMBERS,
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
     Case(
         id="functions.generator",
         description="TABLE(GENERATOR(ROWCOUNT => 3)) with SEQ4",
         sql="select seq4() from table(generator(rowcount => 3)) order by 1",
+        # Expression labels vary; this case checks values/types.
+        compare=Compare(names=False),
     ),
 ]

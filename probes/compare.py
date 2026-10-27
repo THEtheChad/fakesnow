@@ -3,10 +3,8 @@
 Normalisations, applied only when a case's Compare.normalise is on (the default). Each exists because the two
 sides return the same thing in a different Python form; none hides a difference in behaviour:
 
-1. Timezone-aware datetimes are compared as instants (converted to UTC). The run sets TIMEZONE to UTC on
-   Snowflake, so this mostly guards against equal instants carried in different tzinfo classes; offsets are
-   not compared, so a case about TIMESTAMP_TZ offsets should select them explicitly, e.g. with TO_VARCHAR.
-   A naive datetime never equals an aware one.
+1. Timezone-aware datetimes compare their instant AND UTC offset, independent of the tzinfo class.
+   A naive datetime never equals an aware one. The run sets TIMEZONE to UTC on Snowflake.
 2. The text of VARIANT, OBJECT and ARRAY columns (by Snowflake's type code) is compared as JSON tokens, so
    whitespace doesn't count: Snowflake indents it, fakesnow doesn't (upstream normalises the same way in its
    tests with tests.utils.indent). Key order, number spelling ("1.0" vs "1") and string contents still
@@ -23,14 +21,16 @@ from __future__ import annotations
 
 import datetime
 import enum
+import hashlib
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from itertools import zip_longest
 from typing import Any
 
 from probes.model import Case, Compare, Expected
-from probes.outcome import Column, ErrorInfo, Outcome, ResultSet, Step
+from probes.outcome import Column, ErrorInfo, Outcome, ResultSet, Step, encode
 
 SEMI_STRUCTURED = frozenset({5, 9, 10})  # VARIANT, OBJECT, ARRAY
 
@@ -52,6 +52,7 @@ class Verdict:
     status: Status
     differences: tuple[str, ...] = ()
     expected: Expected | None = None
+    fingerprint: str | None = None
 
 
 def classify(case: Case, reference: Outcome, candidate: Outcome, target: str, *, with_expected: bool) -> Verdict:
@@ -66,7 +67,11 @@ def classify(case: Case, reference: Outcome, candidate: Outcome, target: str, *,
     differences = tuple(diff(case.compare, reference, candidate))
     expected = case.expected_for(target) if with_expected else None
     if differences:
-        return Verdict(Status.EXPECTED if expected else Status.UNEXPECTED, differences, expected)
+        fingerprint = comparison_fingerprint(case, reference, candidate)
+        pinned = expected and case.expected_outcomes.get(target) == fingerprint
+        if expected and not pinned:
+            differences += ("expected outcome is unpinned or changed; review both outcomes before updating the pin",)
+        return Verdict(Status.EXPECTED if pinned else Status.UNEXPECTED, differences, expected, fingerprint)
     return Verdict(Status.NOW_MATCHES if expected else Status.MATCH, (), expected)
 
 
@@ -76,9 +81,20 @@ def reference_problem(reference: Outcome) -> str | None:
         return reference.crash
     if reference.setup_error:
         return f"setup failed: {reference.setup_error.sql}: {reference.setup_error.error}"
+    for step in reference.steps:
+        if step.error and not step.error.database_error:
+            return f"statement raised {step.error}"
     if reference.error and not reference.error.database_error:
         return f"probe raised {reference.error}"
-    return None
+    return returned_problem(reference.value)
+
+
+def returned_problem(value: Any) -> str | None:
+    """Captured Python errors on Snowflake indicate a broken probe even when returned via ctx.attempt."""
+    if isinstance(value, ErrorInfo) and not value.database_error:
+        return f"probe returned {value}"
+    values = value.values() if isinstance(value, dict) else value if isinstance(value, list | tuple) else ()
+    return next((problem for item in values if (problem := returned_problem(item))), None)
 
 
 def diff(compare: Compare, reference: Outcome, candidate: Outcome) -> list[str]:
@@ -111,11 +127,37 @@ def diff_errors(where: str, compare: Compare, reference: ErrorInfo | None, candi
     if reference is None or candidate is None:
         return [f"{where}: {_error_or_ok(reference)} vs {_error_or_ok(candidate)}"]
     out: list[str] = []
-    if compare.error_codes and (reference.errno, reference.sqlstate) != (candidate.errno, candidate.sqlstate):
-        out.append(f"{where}: error {_codes(reference)} vs {_codes(candidate)}")
+    if compare.error_codes and error_key(reference) != error_key(candidate):
+        if reference.kind != candidate.kind or reference.database_error != candidate.database_error:
+            out.append(f"{where}: exception {reference.kind} vs {candidate.kind}")
+        else:
+            out.append(f"{where}: error {_codes(reference)} vs {_codes(candidate)}")
     if compare.error_message and reference.message != candidate.message:
         out.append(f"{where}: message {reference.message!r} vs {candidate.message!r}")
     return out
+
+
+def error_key(error: ErrorInfo) -> tuple[Any, ...]:
+    # Exception classes affect callers' except clauses, even when numeric codes happen to match.
+    return (error.errno, error.sqlstate, error.kind, error.database_error)
+
+
+def comparison_fingerprint(case: Case, reference: Outcome, candidate: Outcome) -> str:
+    """Pin all compared data on BOTH sides, without truncating rows or depending on repr display limits."""
+
+    def outcome_key(outcome: Outcome) -> Any:
+        def step_key(step: Step) -> Any:
+            return comparable(step.error if step.error else step.result, case.compare)
+
+        return (
+            step_key(outcome.setup_error) if outcome.setup_error else None,
+            tuple(step_key(step) for step in outcome.steps),
+            comparable(outcome.value, case.compare),
+            comparable(outcome.error, case.compare),
+        )
+
+    body = (case.fingerprint(), repr(case.compare), outcome_key(reference), outcome_key(candidate))
+    return hashlib.sha256(json.dumps(encode(body), sort_keys=True).encode()).hexdigest()
 
 
 def _error_or_ok(error: ErrorInfo | None) -> str:
@@ -191,23 +233,26 @@ def comparable(value: Any, compare: Compare, *, json_text: bool = False) -> Any:
             return ("float", repr(value))
         case datetime.datetime() if value.tzinfo is not None:
             if normalise:
-                return ("instant", value.astimezone(datetime.UTC).replace(tzinfo=None))
+                return ("instant", value.astimezone(datetime.UTC).replace(tzinfo=None), value.utcoffset())
             return ("aware", value.replace(tzinfo=None), value.utcoffset())
         case list() | tuple():
             return (type(value).__name__, tuple(comparable(v, compare) for v in value))
         case dict():
             items = [(comparable(k, compare), comparable(v, compare)) for k, v in value.items()]
-            return ("dict", tuple(sorted(items, key=repr)))
+            return ("dict", tuple(items))
         case ErrorInfo():
             return (
                 "error",
-                (value.errno, value.sqlstate) if compare.error_codes else None,
+                error_key(value) if compare.error_codes else None,
                 value.message if compare.error_message else None,
             )
         case ResultSet():
             json_columns = [c.type_code in SEMI_STRUCTURED for c in value.columns]
             return (
                 "result",
+                len(value.columns),
+                tuple(_scales(value.columns)) if compare.scale else None,
+                tuple(_precisions(value.columns)) if compare.precision else None,
                 tuple(_types(value.columns)) if compare.types else None,
                 tuple(c.name for c in value.columns) if compare.names else None,
                 comparable_rows(value.rows, json_columns, compare) if compare.rows else None,
@@ -219,13 +264,6 @@ def comparable(value: Any, compare: Compare, *, json_text: bool = False) -> Any:
 def _json_tokens(text: str) -> Any:
     """Parse JSON keeping what's meaningful in its text: key order and how each number is written."""
 
-    def number(token: str) -> tuple[str, str]:
-        return ("number", token)
-
-    return json.loads(
-        text,
-        parse_int=number,
-        parse_float=number,
-        parse_constant=number,
-        object_pairs_hook=lambda pairs: ("object", tuple(pairs)),
-    )
+    json.loads(text)  # Reject non-JSON text before tokenising.
+    # Remove whitespace outside quoted strings only: escape spelling is observable too.
+    return re.sub(r'"(?:\\.|[^"\\])*"|\s+', lambda m: m[0] if m[0].startswith('"') else "", text)
