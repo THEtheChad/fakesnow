@@ -235,6 +235,7 @@ def _fakesnow(names: Names) -> Iterator[Session]:
 def _fakesnow_server(names: Names) -> Iterator[Session]:
     if not callable(_start_server):
         raise TargetError("fakesnow.server was imported as a module before probes: start probes first")
+    # uvicorn configures its logging as it starts, so it's quietened after (only its start-up lines get through)
     with _start_server() as server_kwargs, _quiet("fakesnow.server", "uvicorn", "uvicorn.access", "uvicorn.error"):
 
         def connect(schema: str | None = None) -> SnowflakeConnection:

@@ -60,7 +60,7 @@ CASES = [
         id="semis.formatting",
         description="The raw text of a VARIANT, OBJECT and ARRAY, whitespace included (no normalisation)",
         refs=["#477"],
-        compare=Compare(normalise=False),
+        compare=Compare(types=False, normalise=False),
         sql="""select parse_json('{"a": 1, "b": [1, 2]}'), object_construct('k', 1), array_construct(1, 2)""",
         expected=Expected(["#477"], "Snowflake indents JSON text by two spaces, fakesnow returns it compact"),
     ),

@@ -16,36 +16,39 @@ WORDS = [
     "MATCH",
 ]  # fmt: skip
 
-# from #481, checked against Snowflake 10.38 and fakesnow 0.12.1
-_DUCKDB_RESERVED = ["SEMI", "ANTI", "POSITIONAL", "PIVOT", "UNPIVOT", "LAMBDA", "SUMMARIZE", "RETURNING", "SIMILAR"]
-_DUCKDB_RESERVED += ["GLOB", "OVERLAPS", "FREEZE", "CONCURRENTLY", "VERBOSE"]
-# from #481, checked again here: Snowflake creates these tables but refuses the name unquoted in SELECT
-_CREATE_ONLY = ["ASOF", "LATERAL", "USING"]
-# not in #481, which didn't read cursor.description: fakesnow describes a result by parsing the query again as
-# DuckDB SQL, and sqlglot's DuckDB dialect reserves these
-_DESCRIBE = (
-    "fakesnow's cursor.description re-parses the query as DuckDB SQL: raw sqlglot ParseError (HTTP 500 in server)"
-)
+# checked against Snowflake 10.38 and the fork's fakesnow, which quotes the names DuckDB reserves (#482): what's
+# left is mostly sqlglot's Snowflake parser (tobymao/sqlglot#8805) and DuckDB generator (tobymao/sqlglot#8804)
+_PARSER = ["#481", "tobymao/sqlglot#8805"]
+_GENERATOR = "tobymao/sqlglot#8804"
 _ACCEPTS = "fakesnow refuses it, Snowflake accepts it"
-_REFUSES = "Snowflake refuses it, fakesnow accepts it"
-TABLE_DIFFERS = {
-    **dict.fromkeys(_DUCKDB_RESERVED, _ACCEPTS),
+_REFUSES = ("Snowflake refuses it, fakesnow accepts it", ["#481"])
+_CREATE_ONLY = "Snowflake creates the table, then refuses the name in SELECT"
+_SELECT_ONLY = ("Snowflake refuses it in CREATE TABLE, fakesnow only in the SELECT", ["#481"])
+# fakesnow describes a result by parsing its generated DuckDB SQL again, and INSTALL isn't quoted in it
+_DESCRIBE = (
+    "cursor.description re-parses the generated DuckDB SQL: raw sqlglot ParseError",
+    ["#481", "tobymao/sqlglot#8804"],
+)
+TABLE_DIFFERS: dict[str, tuple[str, list[str]]] = {
+    **dict.fromkeys(["RETURNING", "GLOB", "CONCURRENTLY"], (_ACCEPTS, _PARSER)),
+    **dict.fromkeys(["LATERAL", "USING"], (f"{_CREATE_ONLY}; fakesnow refuses the CREATE", _PARSER)),
+    "ASOF": (f"{_CREATE_ONLY}; fakesnow accepts both", ["#481"]),
     **dict.fromkeys(["ROW", "ROWS"], _REFUSES),
-    **dict.fromkeys(
-        _CREATE_ONLY, "Snowflake creates the table, then refuses the name in SELECT; fakesnow refuses CREATE"
-    ),
     "INSTALL": _DESCRIBE,
 }
-COLUMN_DIFFERS = {
-    **dict.fromkeys([*_DUCKDB_RESERVED, *_CREATE_ONLY, "EXCLUDE"], _ACCEPTS),
+COLUMN_DIFFERS: dict[str, tuple[str, list[str]]] = {
+    **dict.fromkeys(["EXCLUDE", "RETURNING", "GLOB", "LATERAL", "USING"], (_ACCEPTS, _PARSER)),
     **dict.fromkeys(["TRY_CAST", "DEFAULT", "ROW", "ROWS"], _REFUSES),
-    **dict.fromkeys(["UNION", "SAMPLE"], "Snowflake refuses it in CREATE TABLE, fakesnow only in the SELECT"),
-    **dict.fromkeys(["MAP", "INSTALL"], _DESCRIBE),
+    **dict.fromkeys(["UNION", "SAMPLE", "QUALIFY", "ILIKE", "TABLESAMPLE"], _SELECT_ONLY),
+    "INSTALL": _DESCRIBE,
 }
 
 
-def _expected(differs: dict[str, str], word: str) -> Expected | None:
-    return Expected(["#481"], differs[word]) if word in differs else None
+def _expected(differs: dict[str, tuple[str, list[str]]], word: str) -> Expected | None:
+    if word not in differs:
+        return None
+    reason, refs = differs[word]
+    return Expected(refs, reason)
 
 
 def cases(word: str) -> list[Case]:

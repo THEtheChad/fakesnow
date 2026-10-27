@@ -8,10 +8,6 @@ NUMBERS = [
     "create or replace table types_num (i int, n number(10,2), b bigint, f float)",
     "insert into types_num values (1, 1.5, 2, 2.5), (2, 2.25, 3, 3.5)",
 ]
-_DML_PREFIX = Expected(
-    ["#473"],
-    "fakesnow's message lacks Snowflake's 'DML operation to table T failed on column C with error: ' prefix",
-)
 
 CASES = [
     # --- VARCHAR(n)
@@ -22,7 +18,6 @@ CASES = [
         compare=Compare(error_message=True),
         setup=["create or replace table types_vc (v varchar(5))"],
         sql="insert into types_vc values ('abcdef')",
-        expected=_DML_PREFIX,
     ),
     Case(
         id="types.varchar-update-over-long",
@@ -31,7 +26,6 @@ CASES = [
         compare=Compare(error_message=True),
         setup=["create or replace table types_vc2 (v varchar(5))", "insert into types_vc2 values ('abc')"],
         sql="update types_vc2 set v = 'abcdefg'",
-        expected=_DML_PREFIX,
     ),
     Case(
         id="types.varchar-sized-cast",
@@ -62,6 +56,7 @@ CASES = [
             "insert into types_vc4 values ('ab', 'cd')",
         ],
         sql="select v, w from types_vc4",
+        expected=Expected([UNFILED], "a VARCHAR(n) column's result metadata gives length 16777216, not n"),
     ),
     # --- NUMBER
     Case(

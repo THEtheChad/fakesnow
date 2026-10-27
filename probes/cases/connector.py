@@ -5,7 +5,7 @@ from typing import Any
 
 from snowflake.connector import DictCursor, SnowflakeConnection
 
-from probes import UNFILED, Case, Compare, Expected, ProbeContext
+from probes import UNFILED, Case, Expected, ProbeContext
 from probes.cases._gaps import DUPLICATE_NAMES
 
 
@@ -80,7 +80,6 @@ CASES = [
     Case(
         id="connector.duplicate-column-names",
         description="A result with two columns of the same name keeps both",
-        compare=Compare(names=True),
         sql=["select 1 as a, 2 as a", "select null::timestamp_ltz, null::timestamp_tz"],
         expected=DUPLICATE_NAMES,
     ),

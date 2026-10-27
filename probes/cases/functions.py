@@ -101,6 +101,7 @@ CASES = [
         id="functions.trim-characters",
         description="LTRIM, RTRIM and TRIM with characters to remove",
         sql="select ltrim('xxa', 'x') as l, rtrim('axx', 'x') as r, trim('xax', 'x') as t",
+        expected=Expected([UNFILED], "LTRIM, RTRIM and TRIM ignore the characters to remove"),
     ),
     Case(
         id="functions.substrings",

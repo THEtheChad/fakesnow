@@ -74,6 +74,9 @@ CASES = [
         id="stages.put",
         description="PUT a small CSV file: the result's columns and row",
         run=put,
+        expected=Expected(
+            [UNFILED], "in-process, PUT's result is described as one 'status' column", targets=["fakesnow"]
+        ),
     ),
     Case(id="stages.list-after-put", description="LIST a stage after a PUT", run=list_after_put),
     Case(
