@@ -4,7 +4,7 @@ from typing import Any
 
 from snowflake.connector import SnowflakeConnection
 
-from probes import UNFILED, Case, Compare, Expected, ProbeContext
+from probes import Case, Compare, Expected, ProbeContext
 
 T = ["create or replace table txn_t (n int)"]
 
@@ -97,16 +97,17 @@ CASES = [
             "select n from txn_t",
         ],
         expected=Expected(
-            [UNFILED],
-            "DDL inside an explicit transaction fails: DuckDB can't also write fakesnow's "
-            "metadata database in it (HTTP 500 in server mode)",
+            ["#491"],
+            "DDL doesn't commit the open transaction; here it fails because it also writes fakesnow's "
+            "metadata database in that transaction (HTTP 500 in server mode). Upstream, without #469, an "
+            "INT table's DDL succeeds and ROLLBACK then discards the earlier insert",
         ),
     ),
     Case(
         id="transactions.current-transaction",
         description="CURRENT_TRANSACTION is NULL outside a transaction and set inside one",
         sql=["select current_transaction() is null", "begin", "select current_transaction() is not null", "rollback"],
-        expected=Expected([UNFILED], "CURRENT_TRANSACTION isn't implemented"),
+        expected=Expected(["#489"], "CURRENT_TRANSACTION isn't implemented"),
     ),
     Case(
         id="transactions.autocommit-off-rollback",

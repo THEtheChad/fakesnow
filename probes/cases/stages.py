@@ -6,7 +6,7 @@ from typing import Any
 
 from snowflake.connector import SnowflakeConnection
 
-from probes import UNFILED, Case, ErrorInfo, Expected, ProbeContext, ResultSet
+from probes import Case, ErrorInfo, Expected, ProbeContext, ResultSet
 
 
 def _put(conn: SnowflakeConnection, ctx: ProbeContext) -> ResultSet | ErrorInfo:
@@ -68,14 +68,14 @@ CASES = [
         id="stages.drop-missing",
         description="DROP STAGE of a stage that doesn't exist",
         sql="drop stage stg_no_such_stage",
-        expected=Expected([UNFILED], "DROP STAGE isn't supported: parser error"),
+        expected=Expected(["#493"], "DROP STAGE isn't supported: parser error"),
     ),
     Case(
         id="stages.put",
         description="PUT a small CSV file: the result's columns and row",
         run=put,
         expected=Expected(
-            [UNFILED], "in-process, PUT's result is described as one 'status' column", targets=["fakesnow"]
+            ["#494"], "in-process, PUT's result is described as one 'status' column", targets=["fakesnow"]
         ),
     ),
     Case(id="stages.list-after-put", description="LIST a stage after a PUT", run=list_after_put),
@@ -83,6 +83,6 @@ CASES = [
         id="stages.select-from-stage",
         description="Select a staged CSV file's columns as $1, $2",
         run=select_from_stage,
-        expected=Expected([UNFILED], "selecting from a staged file isn't supported: parser error at '@'"),
+        expected=Expected(["#493"], "selecting from a staged file isn't supported: parser error at '@'"),
     ),
 ]

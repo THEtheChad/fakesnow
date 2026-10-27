@@ -1,6 +1,6 @@
 """Scalar and aggregate functions: conditionals, strings, LISTAGG."""
 
-from probes import UNFILED, Case, Compare, Expected
+from probes import Case, Compare, Expected
 from probes.cases._gaps import DECIMAL_NOT_INT, FLOAT_NUMBERS, SEMI_TYPES
 
 NAMES = [
@@ -99,7 +99,7 @@ CASES = [
         description="LISTAGG without a separator concatenates directly",
         setup=NAMES,
         sql="select listagg(s) within group (order by s) from f_names where g = 1",
-        expected=Expected([UNFILED], "LISTAGG without a separator joins with ','; Snowflake with ''"),
+        expected=Expected(["tobymao/sqlglot#8819"], "LISTAGG without a separator joins with ','; Snowflake with ''"),
         # Expression labels vary; this case checks values/types.
         compare=Compare(names=False),
     ),
@@ -127,7 +127,7 @@ CASES = [
         id="functions.trim-characters",
         description="LTRIM, RTRIM and TRIM with characters to remove",
         sql="select ltrim('xxa', 'x') as l, rtrim('axx', 'x') as r, trim('xax', 'x') as t",
-        expected=Expected([UNFILED], "LTRIM, RTRIM and TRIM ignore the characters to remove"),
+        expected=Expected(["#489"], "LTRIM, RTRIM and TRIM ignore the characters to remove"),
     ),
     Case(
         id="functions.substrings",
@@ -167,7 +167,7 @@ CASES = [
         id="functions.to-char-number-format",
         description="TO_CHAR of a number with a format",
         sql="select to_char(1234.5, '999,999.00') as f",
-        expected=Expected([UNFILED], "TO_CHAR ignores a number format"),
+        expected=Expected(["#489"], "TO_CHAR ignores a number format"),
     ),
     Case(
         id="functions.md5",
@@ -178,7 +178,7 @@ CASES = [
         id="functions.sha2",
         description="SHA2 of a string, 256 and 512 bits",
         sql="select sha2('a') as a, sha2('a', 512) as b",
-        expected=Expected([UNFILED], "SHA2 isn't implemented"),
+        expected=Expected(["#489"], "SHA2 isn't implemented"),
     ),
     # --- aggregates
     Case(

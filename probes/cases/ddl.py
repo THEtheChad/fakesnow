@@ -4,7 +4,7 @@ from typing import Any
 
 from snowflake.connector import DictCursor, SnowflakeConnection
 
-from probes import UNFILED, Case, Compare, Expected, ProbeContext
+from probes import Case, Compare, Expected, ProbeContext
 
 INFO = [
     "create or replace table ddl_info (id int not null, name varchar(10), amount number(10,2), "
@@ -55,7 +55,7 @@ CASES = [
         description="CREATE TABLE IF NOT EXISTS reports an existing table",
         setup=["create or replace table ddl_s (x int)"],
         sql="create table if not exists ddl_s (x int)",
-        expected=Expected([UNFILED], "CREATE TABLE IF NOT EXISTS claims an existing table was created"),
+        expected=Expected(["#490"], "CREATE TABLE IF NOT EXISTS claims an existing table was created"),
     ),
     Case(
         id="ddl.drop-table-status",
@@ -67,7 +67,7 @@ CASES = [
         id="ddl.drop-missing-table-status",
         description="DROP TABLE IF EXISTS reports a missing table",
         sql="drop table if exists ddl_missing_status",
-        expected=Expected([UNFILED], "DROP TABLE IF EXISTS claims a missing table was dropped"),
+        expected=Expected(["#490"], "DROP TABLE IF EXISTS claims a missing table was dropped"),
     ),
     Case(
         id="ddl.create-view-status",
@@ -104,7 +104,7 @@ CASES = [
         "from information_schema.columns where table_schema = '{schema}' and table_name = 'DDL_CTAS' "
         "order by ordinal_position",
         expected=Expected(
-            [UNFILED],
+            ["#485"],
             "CTAS columns from an integer and a string literal are INTEGER and unsized TEXT; "
             "Snowflake sizes them NUMBER(1,0) and VARCHAR(2)",
         ),
@@ -188,7 +188,7 @@ CASES = [
         setup=INFO,
         sql="select table_catalog, table_schema, table_name, table_type, comment from information_schema.tables "
         "where table_schema = '{schema}' and table_name = 'DDL_INFO'",
-        expected=Expected([UNFILED], "INFORMATION_SCHEMA.TABLES returns the COMMENT column name in lower case"),
+        expected=Expected(["#490"], "INFORMATION_SCHEMA.TABLES returns the COMMENT column name in lower case"),
     ),
     Case(
         id="ddl.information-schema-columns",
@@ -210,7 +210,7 @@ CASES = [
         sql="select table_name, view_definition from information_schema.views "
         "where table_schema = '{schema}' and table_name = 'DDL_IVIEW'",
         expected=Expected(
-            [UNFILED], "VIEW_DEFINITION holds the DuckDB SQL fakesnow generated, not the statement as written"
+            ["#490"], "VIEW_DEFINITION holds the DuckDB SQL fakesnow generated, not the statement as written"
         ),
     ),
     # --- SHOW and DESCRIBE
@@ -219,14 +219,14 @@ CASES = [
         description="SHOW TABLES LIKE: name, database, schema, kind, comment",
         setup=INFO,
         run=show_tables,
-        expected=Expected([UNFILED], "SHOW TABLES doesn't report the table's comment"),
+        expected=Expected(["#490"], "SHOW TABLES doesn't report the table's comment"),
     ),
     Case(
         id="ddl.show-tables-columns",
         description="The columns SHOW TABLES returns",
         run=show_tables_columns,
         expected=Expected(
-            [UNFILED],
+            ["#490"],
             "SHOW TABLES' columns differ from current Snowflake's in order and set (kind, budget, "
             "is_interactive, row_timestamp, error_logging)",
         ),
@@ -236,7 +236,7 @@ CASES = [
         description="SHOW COLUMNS IN TABLE: name, data type JSON, nullability, kind",
         setup=INFO,
         run=show_columns,
-        expected=Expected([UNFILED], "SHOW COLUMNS reports a NOT NULL column as nullable"),
+        expected=Expected(["#490"], "SHOW COLUMNS reports a NOT NULL column as nullable"),
     ),
     Case(
         id="ddl.show-schemas",
@@ -250,7 +250,7 @@ CASES = [
         ],
         teardown=["drop database if exists {schema}_SS"],
         run=show_schemas,
-        expected=Expected([UNFILED], "SHOW SCHEMAS LIKE ignores the pattern and lists every schema"),
+        expected=Expected(["#490"], "SHOW SCHEMAS LIKE ignores the pattern and lists every schema"),
     ),
     Case(
         id="ddl.describe-table",

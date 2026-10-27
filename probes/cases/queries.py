@@ -1,6 +1,6 @@
 """Query shapes: FLATTEN and LATERAL, window functions and QUALIFY, MERGE, GROUP BY ALL."""
 
-from probes import UNFILED, Case, Compare, Expected
+from probes import Case, Compare, Expected
 from probes.cases._gaps import DECIMAL_NOT_INT, SUM_FLOAT
 
 FLAT = [
@@ -35,7 +35,7 @@ CASES = [
         description="All of FLATTEN's columns: SEQ, KEY, PATH, INDEX, VALUE, THIS",
         sql="select seq, key, path, index, value, this from table(flatten(parse_json('[10]')))",
         expected=Expected(
-            [UNFILED], "FLATTEN's SEQ is a large arbitrary number; Snowflake numbers the input rows from 1"
+            ["#487"], "FLATTEN's SEQ is a large arbitrary number; Snowflake numbers the input rows from 1"
         ),
     ),
     Case(
@@ -50,14 +50,14 @@ CASES = [
         setup=FLAT,
         sql="select t.id, f.value::string as tag from q_flat t, lateral flatten(input => t.tags, outer => true) f "
         "order by 1, 2",
-        expected=Expected([UNFILED], "FLATTEN's OUTER => TRUE is ignored, so rows with an empty array are dropped"),
+        expected=Expected(["#487"], "FLATTEN's OUTER => TRUE is ignored, so rows with an empty array are dropped"),
     ),
     Case(
         id="queries.flatten-nested-path",
         description="FLATTEN with PATH into a nested array",
         sql="""select f.value from table(flatten(input => parse_json('{"a": {"b": [7, 8]}}'), path => 'a.b')) f """
         "order by f.index",
-        expected=Expected([UNFILED], "FLATTEN's PATH => is ignored"),
+        expected=Expected(["#487"], "FLATTEN's PATH => is ignored"),
     ),
     # --- window functions and QUALIFY
     Case(
@@ -156,7 +156,7 @@ CASES = [
         setup=[*MERGE, "insert into q_src values (1, 'again')"],
         sql="merge into q_tgt using q_src on q_tgt.id = q_src.id when matched then update set v = q_src.v",
         expected=Expected(
-            [UNFILED], "MERGE doesn't fail when two source rows match one target row (Snowflake: 100090 Duplicate row)"
+            ["#492"], "MERGE doesn't fail when two source rows match one target row (Snowflake: 100090 Duplicate row)"
         ),
     ),
     Case(
@@ -168,7 +168,7 @@ CASES = [
             "select id, v from q_tgt order by id",
         ],
         expected=Expected(
-            [UNFILED], "MERGE with a source alias and no WHEN NOT MATCHED clause fails: binder error on the alias"
+            ["#492"], "MERGE with a source alias and no WHEN NOT MATCHED clause fails: binder error on the alias"
         ),
     ),
 ]

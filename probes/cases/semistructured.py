@@ -2,7 +2,7 @@
 
 from snowflake.connector import SnowflakeConnection
 
-from probes import UNFILED, Case, Compare, Expected, ProbeContext
+from probes import Case, Compare, Expected, ProbeContext
 from probes.cases._gaps import DUCKDB_LIST, SEMI_TYPES
 
 SEMIS = ["create or replace table semis_t (a array, o object, v variant)"]
@@ -78,7 +78,7 @@ CASES = [
         id="semis.object-construct-key-order",
         description="The key order of OBJECT_CONSTRUCT's result (as VARCHAR)",
         sql="select object_construct('b', 1, 'a', 2)::varchar as o",
-        expected=Expected([UNFILED], "OBJECT_CONSTRUCT keeps the keys in argument order; Snowflake sorts them"),
+        expected=Expected(["#486"], "OBJECT_CONSTRUCT keeps the keys in argument order; Snowflake sorts them"),
     ),
     Case(
         id="semis.parse-json-scalars",
@@ -91,7 +91,7 @@ CASES = [
         description="PARSE_JSON of invalid JSON fails",
         sql="select parse_json('{bad')",
         expected=Expected(
-            [UNFILED],
+            ["#483"],
             "invalid JSON raises DuckDB's InvalidInputException, not ProgrammingError 100069 (HTTP 500 in server mode)",
         ),
     ),
@@ -125,7 +125,7 @@ CASES = [
         description="TYPEOF of VARIANT values",
         sql="""select typeof(parse_json('1')), typeof(parse_json('1.5')), typeof(parse_json('"a"')), """
         """typeof(parse_json('[1]')), typeof(parse_json('{"a": 1}')), typeof(parse_json('null'))""",
-        expected=Expected([UNFILED], "TYPEOF returns DuckDB's 'JSON' for every VARIANT"),
+        expected=Expected(["#486"], "TYPEOF returns DuckDB's 'JSON' for every VARIANT"),
         # Expression labels vary; this case checks values/types.
         compare=Compare(names=False),
     ),
@@ -187,14 +187,14 @@ CASES = [
         id="semis.string-to-variant",
         description="A string cast to VARIANT is a JSON string",
         sql="select 'x'::variant as v, to_variant(1) as n",
-        expected=Expected([UNFILED], "a string cast to VARIANT is parsed as JSON instead of becoming a JSON string"),
+        expected=Expected(["#486"], "a string cast to VARIANT is parsed as JSON instead of becoming a JSON string"),
     ),
     Case(
         id="semis.variant-comparison",
         description="Comparing a VARIANT path with a literal",
         setup=DOC,
         sql="select v:s = 'x' as eq, v:a.b[0] > 5 as gt from semis_v",
-        expected=Expected([UNFILED], "comparing a VARIANT with a string literal parses the literal as JSON and fails"),
+        expected=Expected(["#486"], "comparing a VARIANT with a string literal parses the literal as JSON and fails"),
     ),
     # --- metadata
     Case(

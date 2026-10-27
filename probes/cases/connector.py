@@ -5,7 +5,7 @@ from typing import Any
 
 from snowflake.connector import DictCursor, SnowflakeConnection
 
-from probes import UNFILED, Case, Compare, Expected, ProbeContext
+from probes import Case, Compare, Expected, ProbeContext
 from probes.cases._gaps import DUPLICATE_NAMES
 
 
@@ -96,7 +96,7 @@ CASES = [
         description="execute_async, polling get_query_status (the monitoring endpoint), get_results_from_sfqid",
         run=execute_async,
         expected=Expected(
-            [UNFILED], "the in-process connection has no get_query_status or is_still_running", targets=["fakesnow"]
+            ["#494"], "the in-process connection has no get_query_status or is_still_running", targets=["fakesnow"]
         ),
     ),
     Case(id="connector.describe", description="cursor.describe's names and type codes", run=describe),
@@ -113,7 +113,7 @@ CASES = [
         description="fetch_pandas_all: column names, dtypes and values",
         run=fetch_pandas,
         expected=Expected(
-            [UNFILED],
+            ["#484"],
             "fetch_pandas_all gives Decimal objects for a NUMBER(2,1) column and int32 for "
             "NUMBER(1,0); Snowflake float64 and int8",
         ),
@@ -122,6 +122,6 @@ CASES = [
         id="connector.last-query-id",
         description="LAST_QUERY_ID() is the previous statement's sfqid",
         run=last_query_id,
-        expected=Expected([UNFILED], "LAST_QUERY_ID isn't implemented"),
+        expected=Expected(["#489"], "LAST_QUERY_ID isn't implemented"),
     ),
 ]
