@@ -1,6 +1,7 @@
 """Where cases run: real Snowflake, fakesnow in-process (fakesnow.patch) or fakesnow's server.
 
-Each target opens a session in the run's own schema, created at the start and dropped at the end.
+Each target opens a session in the run's own schema, created at the start and dropped at the end, along with
+every schema or database named after it: each case's own schema, and anything a case creates outside it.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import snowflake.connector
 from snowflake.connector import SnowflakeConnection
 
 import fakesnow
+from probes.outcome import ErrorInfo
 
 # fakesnow.server() imports the fakesnow.server module, which then shadows the function on the package, so a
 # second call in the same process fails: keep the function from before that happens
@@ -64,28 +66,41 @@ class TargetError(RuntimeError):
 
 @dataclass(frozen=True)
 class Names:
-    """The run's database and unique schema, and how cases refer to them."""
+    """The run's database and unique schema, or a case's own schema within the run, and how cases refer to them."""
 
     database: str
     schema: str
+    run_schema: str = ""
+    """For a case's names: the run's schema, which the case's is named after. Empty for the run's own names."""
 
     @classmethod
     def new(cls, database: str) -> Names:
         return cls(database, f"PROBES_{time.strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(8).upper()}")
 
     def __post_init__(self) -> None:
-        for name in (self.database, self.schema):
+        for name in filter(None, (self.database, self.schema, self.run_schema)):
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", name):
                 raise TargetError("probe database/schema names must be simple unquoted SQL identifiers")
-        object.__setattr__(self, "database", self.database.upper())
-        object.__setattr__(self, "schema", self.schema.upper())
+        for name in ("database", "schema", "run_schema"):
+            object.__setattr__(self, name, getattr(self, name).upper())
+
+    @property
+    def run(self) -> str:
+        """The run's schema: every schema or database the run creates is named starting with it."""
+        return self.run_schema or self.schema
+
+    def case(self, number: int) -> Names:
+        """The names for the run's number-th case: its own schema, named after the run's so cleanup finds it."""
+        return Names(self.database, f"{self.run}_C{number}", self.run)
 
     def render(self, sql: str) -> str:
         return sql.replace("{database}", self.database).replace("{schema}", self.schema)
 
     @property
     def placeholders(self) -> dict[str, str]:
-        return {self.schema: "{schema}", self.database: "{database}"}
+        # a case's schema starts with the run's: the scrubber tries the longer name first
+        run = {self.run_schema: "{run_schema}"} if self.run_schema else {}
+        return {self.schema: "{schema}", self.database: "{database}", **run}
 
 
 @dataclass(frozen=True)
@@ -122,23 +137,52 @@ class SnowflakeConfig:
 
 @dataclass
 class Session:
-    """An open target: its main connection, and a way to open more sessions in the run's schema."""
+    """An open target: its main connection, and a way to open more sessions in the run's database.
+
+    Each case runs in a schema of its own (enter_case and leave_case), so what one case creates in its schema can't
+    affect another.
+    """
 
     target: str
-    names: Names
+    run_names: Names
     conn: SnowflakeConnection
-    open_connection: Callable[[], SnowflakeConnection]
+    open_connection: Callable[[str], SnowflakeConnection]
+    """Opens another session in the given schema of the run's database."""
     info: dict[str, str]
+    names: Names = field(init=False)
+    """The current case's names, whose {schema} is the case's own schema; the run's between cases."""
+
+    def __post_init__(self) -> None:
+        self.names = self.run_names
 
     @property
     def is_snowflake(self) -> bool:
         return self.target == SNOWFLAKE
 
     def connect(self) -> SnowflakeConnection:
-        return self.open_connection()
+        return self.open_connection(self.names.schema)
+
+    def enter_case(self, number: int) -> Names:
+        """Create the case's schema, which makes it the main session's current schema."""
+        names = self.run_names.case(number)
+        self.conn.cursor().execute(f"create schema {names.database}.{names.schema}")
+        self.names = names
+        self.restore()
+        return names
+
+    def leave_case(self) -> str | None:
+        """Drop the case's schema and everything in it; why that failed, if it did."""
+        names, self.names = self.names, self.run_names
+        if names is self.run_names:
+            return None
+        try:
+            self.conn.cursor().execute(f"drop schema if exists {names.database}.{names.schema} cascade")
+        except snowflake.connector.errors.Error as e:
+            return f"dropping the case's schema failed: {ErrorInfo.from_exception(e)}"
+        return None
 
     def restore(self) -> None:
-        """Put the main session back in the run's schema, if a case moved it."""
+        """Put the main session back in the current case's schema, if the connector reports it elsewhere."""
         if (self.conn.database or "").upper() != self.names.database.upper() or (
             self.conn.schema or ""
         ).upper() != self.names.schema.upper():
@@ -191,7 +235,7 @@ def _snowflake(names: Names, config: SnowflakeConfig) -> Iterator[Session]:
             SNOWFLAKE,
             names,
             conn,
-            lambda: connect(names.schema),
+            connect,
             {"version": version, "connector": snowflake.connector.__version__},
         )
     finally:
@@ -244,7 +288,7 @@ def _fakesnow(names: Names) -> Iterator[Session]:
                 FAKESNOW,
                 names,
                 conn,
-                lambda: snowflake.connector.connect(database=names.database, schema=names.schema),
+                lambda schema: snowflake.connector.connect(database=names.database, schema=schema),
                 fakesnow_info(),
             )
         finally:
@@ -268,7 +312,7 @@ def _fakesnow_server(names: Names) -> Iterator[Session]:
         conn = connect()
         try:
             conn.cursor().execute(f"create schema {names.database}.{names.schema}")
-            yield Session(FAKESNOW_SERVER, names, conn, lambda: connect(names.schema), fakesnow_info())
+            yield Session(FAKESNOW_SERVER, names, conn, connect, fakesnow_info())
         finally:
             conn.close()
 

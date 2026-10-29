@@ -86,13 +86,15 @@ class Case:
     sql: the statement(s) under test, each compared. Mutually exclusive with run.
     run: a Python probe, for what SQL alone can't express (connector APIs, several sessions, ...).
     setup: statements run first and not compared. Snowflake must accept them.
-    teardown: statements always run last, errors ignored. Only for things outside the run's schema.
+    teardown: statements always run last, errors ignored. Only for what dropping the case's schema doesn't undo:
+        schemas and databases outside it, and changes to the session (see probes.isolation).
     refs: upstream issues or PRs the case relates to.
     compare: what to compare.
     expected: a known difference (or one per target).
 
-    SQL may use the placeholders {database} and {schema}: the run's database and its unique schema.
-    Name anything a case creates outside that schema starting with {schema}, so the run can clean it up.
+    SQL may use the placeholders {database} and {schema}: the run's database and the case's own schema, created for
+    the case and dropped after it. Name anything a case creates outside that schema starting with {schema}, so the
+    run can clean it up.
     """
 
     id: str
