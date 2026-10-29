@@ -1445,7 +1445,7 @@ def test_order_rejects_unknown_cases_and_shuffle(tmp_path: Path, extra: list[str
 # --- finding polluters
 
 
-def test_ddmin_finds_a_smallest_set_in_order():
+def test_ddmin_finds_a_1_minimal_set_in_order():
     items = list(range(40))
     assert ddmin(items, lambda s: 17 in s) == [17]
     assert ddmin(items, lambda s: 3 in s and 31 in s) == [3, 31]

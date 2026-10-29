@@ -229,10 +229,12 @@ leak check, verdicts shouldn't depend on the order: if a case's does, something 
 
 `--find-polluter ID`, with the selection and order (`-k`, `--shuffle SEED`, `--order`) of the run where `ID`
 changed, finds which cases before it change its outcome, like RSpec's `--bisect`. It runs the case alone, then
-after the cases before it, and if its outcome changes, narrows those down by delta debugging to a smallest set
-that still changes it, each trial on a fresh target (for `fakesnow-server`, a fakesnow instance of its own). "Changes" is the case's own comparison (a case comparing
-types only isn't changed by other values). It runs on one fakesnow `--target` (default `fakesnow`), never
-Snowflake, and prints the polluters, how they change the case, and a command that reproduces it with `--order`.
+after the cases before it, and if its outcome changes, narrows those down by delta debugging to a set that still
+changes it and is 1-minimal: without any one of them, it doesn't (not necessarily the smallest such set). Each trial
+runs on a fresh target (for `fakesnow-server`, a fakesnow instance of its own). "Changes" is the case's own
+comparison (a case comparing types only isn't changed by other values). It runs on one fakesnow `--target` (default
+`fakesnow`), never Snowflake, and prints the polluters, how they change the case, and a command that reproduces it
+with `--order`.
 It runs with the leak check's cleanup, as a normal run does, so it finds what the check misses; add
 `--keep-leaks` to find cases whose leaks the check already reports. With `--baseline`, it runs in the recorded run's
 database, as a normal run against that baseline does (otherwise `PROBES`), and the command it prints keeps
