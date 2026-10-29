@@ -3,6 +3,7 @@
 import importlib
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -749,80 +750,158 @@ def test_a_teardown_that_could_change_the_session_is_followed_by_another_reset()
     assert round_trips(case)[:5] == ["create schema DB.X", "rollback", "autocommit True", "rollback", "autocommit True"]
 
 
-def test_snowflake_leaks_and_how_they_are_undone():
+BEFORE = State(
+    schemas=frozenset({"PUBLIC", "PROBES_X"}),
+    context={"role": "PROBER", "warehouse": "WH", "secondary roles": '{"roles":"","value":""}'},
+    parameters={
+        "TIMEZONE": Parameter("UTC", "STRING", "SESSION"),
+        "STATEMENT_TIMEOUT_IN_SECONDS": Parameter("60", "NUMBER", "SESSION"),
+        "LOCK_TIMEOUT": Parameter("43200", "NUMBER", ""),
+        "ODD": Parameter("x", "ENUM?", "SESSION"),
+    },
+    variables={
+        "KEPT": ("1", "fixed"),
+        "GONE": ("a'b", "text"),
+        "NULL_GONE": (None, "text"),
+        "RETYPED": ("1", "fixed"),
+        "NULLED": ("5", "fixed"),
+        "ODD": ("2026-10-29", "date"),
+    },
+)
+
+
+def changed(**changes: Any) -> State:
+    """BEFORE with some of its context, parameters or variables changed (None: gone), or other objects."""
+    state = BEFORE
+    for kind, change in changes.items():
+        if kind in ("context", "parameters", "variables"):
+            merged = {**getattr(BEFORE, kind), **change}
+            change = {key: value for key, value in merged.items() if value is not None}
+        state = replace(state, **{kind: change})
+    return state
+
+
+@pytest.mark.parametrize(
+    ("after", "leak", "undo"),
+    [
+        pytest.param(
+            changed(schemas=BEFORE.schemas | {"PROBES_X_C1_S2"}),
+            "schema DB.PROBES_X_C1_S2 left behind",
+            'drop schema if exists DB."PROBES_X_C1_S2" cascade',
+            id="schema-left",
+        ),
+        # the database is shared: only what's named after the run is dropped
+        pytest.param(
+            changed(schemas=BEFORE.schemas | {"SOMEONE_ELSES"}),
+            "schema DB.SOMEONE_ELSES left behind, not named after the run",
+            None,
+            id="schema-left-not-the-runs",
+        ),
+        pytest.param(changed(schemas=frozenset({"PROBES_X"})), "schema DB.PUBLIC dropped", None, id="schema-dropped"),
+        pytest.param(
+            changed(databases=frozenset({"PROBES_X_C1_DB"})),
+            "database PROBES_X_C1_DB left behind",
+            'drop database if exists "PROBES_X_C1_DB" cascade',
+            id="database-left",
+        ),
+        pytest.param(
+            changed(temporary_tables=frozenset({("DB", "PROBES_X", "MINE")})),
+            "temporary table DB.PROBES_X.MINE left behind",
+            'drop table if exists "DB"."PROBES_X"."MINE"',
+            id="temporary-table-left",
+        ),
+        # DROP TABLE drops a permanent table of the same name if the temporary one is gone
+        pytest.param(
+            changed(temporary_tables=frozenset({("DB", "PUBLIC", "THEIRS")})),
+            "temporary table DB.PUBLIC.THEIRS left behind",
+            None,
+            id="temporary-table-left-not-the-runs",
+        ),
+        pytest.param(
+            changed(context={"role": "OTHER"}),
+            "session role changed from PROBER to OTHER",
+            'use role "PROBER"',
+            id="role",
+        ),
+        pytest.param(
+            changed(context={"secondary roles": '{"roles":"R1","value":"R1"}'}),
+            'session secondary roles changed from {"roles":"","value":""} to {"roles":"R1","value":"R1"}',
+            "use secondary roles none",
+            id="secondary-roles",
+        ),
+        pytest.param(
+            changed(parameters={"STATEMENT_TIMEOUT_IN_SECONDS": Parameter("5", "NUMBER", "SESSION")}),
+            "session parameter STATEMENT_TIMEOUT_IN_SECONDS changed from '60' to '5'",
+            "alter session set STATEMENT_TIMEOUT_IN_SECONDS = 60",
+            id="number-parameter",
+        ),
+        pytest.param(
+            changed(parameters={"TIMEZONE": Parameter("America/New_York", "STRING", "SESSION")}),
+            "session parameter TIMEZONE changed from 'UTC' to 'America/New_York'",
+            "alter session set TIMEZONE = 'UTC'",
+            id="string-parameter",
+        ),
+        # inherited before: unset, so it's inherited again
+        pytest.param(
+            changed(parameters={"LOCK_TIMEOUT": Parameter("1", "NUMBER", "SESSION")}),
+            "session parameter LOCK_TIMEOUT changed from '43200' (inherited) to '1' (set in the session)",
+            "alter session unset LOCK_TIMEOUT",
+            id="inherited-parameter",
+        ),
+        # a type the runner can't write a literal of: reported, not undone
+        pytest.param(
+            changed(parameters={"ODD": Parameter("y", "ENUM?", "SESSION")}),
+            "session parameter ODD changed from 'x' to 'y'",
+            None,
+            id="parameter-of-another-type",
+        ),
+        pytest.param(
+            changed(variables={"new_one": ("x", "text")}),
+            "session variable new_one set to 'x'",
+            'unset "new_one"',
+            id="variable-set",
+        ),
+        pytest.param(
+            changed(variables={"GONE": None}), "session variable GONE unset", "set GONE = 'a\\'b'", id="variable-unset"
+        ),
+        pytest.param(
+            changed(variables={"NULL_GONE": None}),
+            "session variable NULL_GONE unset",
+            "set NULL_GONE = cast(null as varchar)",
+            id="null-variable-unset",
+        ),
+        pytest.param(
+            changed(variables={"KEPT": ("2", "fixed")}),
+            "session variable KEPT changed from '1' to '2'",
+            "set KEPT = 1",
+            id="variable-changed",
+        ),
+        pytest.param(
+            changed(variables={"RETYPED": ("1", "text")}),
+            "session variable RETYPED changed from '1' (fixed) to '1' (text)",
+            "set RETYPED = 1",
+            id="variable-retyped",
+        ),
+        # SHOW VARIABLES lists every NULL as text
+        pytest.param(
+            changed(variables={"NULLED": (None, "text")}),
+            "session variable NULLED changed from '5' (fixed) to None (text)",
+            "set NULLED = 5",
+            id="variable-nulled",
+        ),
+        pytest.param(
+            changed(variables={"ODD": ("2026-10-30", "date")}),
+            "session variable ODD changed from '2026-10-29' to '2026-10-30'",
+            None,
+            id="variable-of-another-type",
+        ),
+    ],
+)
+def test_a_snowflake_leak_and_how_its_undone(after: State, leak: str, undo: str | None):
     session, _ = stub_session()
     check = LeakCheck.__new__(LeakCheck)
     check.session = session
-    before = State(
-        schemas=frozenset({"PUBLIC", "PROBES_X"}),
-        context={"role": "PROBER", "warehouse": "WH", "secondary roles": '{"roles":"","value":""}'},
-        parameters={
-            "TIMEZONE": Parameter("UTC", "STRING", "SESSION"),
-            "STATEMENT_TIMEOUT_IN_SECONDS": Parameter("60", "NUMBER", "SESSION"),
-            "LOCK_TIMEOUT": Parameter("43200", "NUMBER", ""),
-            "ODD": Parameter("x", "ENUM?", "SESSION"),
-        },
-        variables={
-            "KEPT": ("1", "fixed"),
-            "GONE": ("a'b", "text"),
-            "NULL_GONE": (None, "text"),
-            "RETYPED": ("1", "fixed"),
-            "NULLED": ("5", "fixed"),
-            "ODD": ("2026-10-29", "date"),
-        },
-    )
-    after = State(
-        schemas=frozenset({"PROBES_X", "PROBES_X_C1_S2", "SOMEONE_ELSES"}),
-        databases=frozenset({"PROBES_X_C1_DB"}),
-        temporary_tables=frozenset({("DB", "PROBES_X", "MINE"), ("DB", "PUBLIC", "THEIRS")}),
-        context={"role": "OTHER", "warehouse": "WH", "secondary roles": '{"roles":"R1","value":"R1"}'},
-        parameters={
-            "TIMEZONE": Parameter("America/New_York", "STRING", "SESSION"),
-            "STATEMENT_TIMEOUT_IN_SECONDS": Parameter("5", "NUMBER", "SESSION"),
-            "LOCK_TIMEOUT": Parameter("1", "NUMBER", "SESSION"),
-            "ODD": Parameter("y", "ENUM?", "SESSION"),
-        },
-        variables={
-            "KEPT": ("2", "fixed"),
-            "new_one": ("x", "text"),
-            "NULLED": (None, "text"),
-            "RETYPED": ("1", "text"),
-            "ODD": ("2026-10-30", "date"),
-        },
-    )
-    leaks = {leak.description: leak.undo for leak in check.changes(before, after)}
-    assert leaks == {
-        "schema DB.PROBES_X_C1_S2 left behind": 'drop schema if exists DB."PROBES_X_C1_S2" cascade',
-        # the database is shared: only what's named after the run is dropped
-        "schema DB.SOMEONE_ELSES left behind, not named after the run": None,
-        "schema DB.PUBLIC dropped": None,
-        "database PROBES_X_C1_DB left behind": 'drop database if exists "PROBES_X_C1_DB" cascade',
-        "temporary table DB.PROBES_X.MINE left behind": 'drop table if exists "DB"."PROBES_X"."MINE"',
-        # DROP TABLE drops a permanent table of the same name if the temporary one is gone
-        "temporary table DB.PUBLIC.THEIRS left behind": None,
-        "session role changed from PROBER to OTHER": 'use role "PROBER"',
-        'session secondary roles changed from {"roles":"","value":""} to {"roles":"R1","value":"R1"}': (
-            "use secondary roles none"
-        ),
-        "session parameter STATEMENT_TIMEOUT_IN_SECONDS changed from '60' to '5'": (
-            "alter session set STATEMENT_TIMEOUT_IN_SECONDS = 60"
-        ),
-        "session parameter TIMEZONE changed from 'UTC' to 'America/New_York'": "alter session set TIMEZONE = 'UTC'",
-        # inherited before: unset, so it's inherited again
-        "session parameter LOCK_TIMEOUT changed from '43200' (inherited) to '1' (set in the session)": (
-            "alter session unset LOCK_TIMEOUT"
-        ),
-        # a type the runner can't write a literal of: reported, not undone
-        "session parameter ODD changed from 'x' to 'y'": None,
-        "session variable new_one set to 'x'": 'unset "new_one"',
-        "session variable GONE unset": "set GONE = 'a\\'b'",
-        "session variable NULL_GONE unset": "set NULL_GONE = cast(null as varchar)",
-        "session variable KEPT changed from '1' to '2'": "set KEPT = 1",
-        "session variable RETYPED changed from '1' (fixed) to '1' (text)": "set RETYPED = 1",
-        # SHOW VARIABLES lists every NULL as text
-        "session variable NULLED changed from '5' (fixed) to None (text)": "set NULLED = 5",
-        "session variable ODD changed from '2026-10-29' to '2026-10-30'": None,
-    }
+    assert {found.description: found.undo for found in check.changes(BEFORE, after)} == {leak: undo}
 
 
 # --- comparing and reporting leaks
