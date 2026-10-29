@@ -174,9 +174,13 @@ class Session:
     """fakesnow's own object for the main session, for what SQL can't tell (see temporary_tables)."""
     names: Names = field(init=False)
     """The current case's names, whose {schema} is the case's own schema; the run's between cases."""
+    _fakesnow_own: frozenset[int] = field(init=False, default=frozenset())
+    """fakesnow only: the OIDs of its own temporary tables, which it creates as the session opens."""
 
     def __post_init__(self) -> None:
         self.names = self.run_names
+        if self.fakesnow_session:
+            self._fakesnow_own = frozenset(self._temporary_oids().values())
 
     @property
     def is_snowflake(self) -> bool:
@@ -224,14 +228,20 @@ class Session:
         even if that's since been dropped; None if fakesnow didn't record it.
 
         DuckDB keeps every temporary table in one catalog (temp.main), so only fakesnow knows each one's schema.
+        Not fakesnow's own (its column metadata, temp.main._fs_columns_ext): those it had before the run's first
+        statement, known by OID, which DuckDB never reuses, rather than by name, which a case can share.
         """
         assert self.fakesnow_session, "Snowflake lists temporary tables with SHOW TABLES"
         owners = self.fakesnow_session().temporary_tables.owners()
-        cur = self.conn.cursor()
-        # DuckDB's catalog function, which fakesnow passes through; _fs_ tables are fakesnow's own
-        cur.execute("select table_name from duckdb_tables() where temporary and not starts_with(table_name, '_fs_')")
-        tables = [str(row[0]) for row in cur.fetchall()]
+        tables = [name for name, oid in self._temporary_oids().items() if oid not in self._fakesnow_own]
         return {table: _owner(owners.get(table)) for table in tables}
+
+    def _temporary_oids(self) -> dict[str, int]:
+        """fakesnow only: the main session's temporary tables' OIDs, by name (unique among them)."""
+        cur = self.conn.cursor()
+        # DuckDB's catalog function, which fakesnow passes through
+        cur.execute("select table_name, table_oid from duckdb_tables() where temporary")
+        return {str(name): int(oid) for name, oid in cur.fetchall()}
 
     def restore(self) -> None:
         """Put the main session back in the current case's schema, if the connector reports it elsewhere."""
