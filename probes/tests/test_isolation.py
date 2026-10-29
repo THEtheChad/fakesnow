@@ -765,7 +765,7 @@ def test_snowflake_leaks_and_how_they_are_undone():
         variables={
             "KEPT": ("1", "fixed"),
             "GONE": ("a'b", "text"),
-            "NULL_GONE": (None, "fixed"),
+            "NULL_GONE": (None, "text"),
             "RETYPED": ("1", "fixed"),
             "NULLED": ("5", "fixed"),
             "ODD": ("2026-10-29", "date"),
@@ -785,7 +785,7 @@ def test_snowflake_leaks_and_how_they_are_undone():
         variables={
             "KEPT": ("2", "fixed"),
             "new_one": ("x", "text"),
-            "NULLED": (None, "fixed"),
+            "NULLED": (None, "text"),
             "RETYPED": ("1", "text"),
             "ODD": ("2026-10-30", "date"),
         },
@@ -816,10 +816,11 @@ def test_snowflake_leaks_and_how_they_are_undone():
         "session parameter ODD changed from 'x' to 'y'": None,
         "session variable new_one set to 'x'": 'unset "new_one"',
         "session variable GONE unset": "set GONE = 'a\\'b'",
-        "session variable NULL_GONE unset": "set NULL_GONE = cast(null as number)",
+        "session variable NULL_GONE unset": "set NULL_GONE = cast(null as varchar)",
         "session variable KEPT changed from '1' to '2'": "set KEPT = 1",
         "session variable RETYPED changed from '1' (fixed) to '1' (text)": "set RETYPED = 1",
-        "session variable NULLED changed from '5' to None": "set NULLED = 5",
+        # SHOW VARIABLES lists every NULL as text
+        "session variable NULLED changed from '5' (fixed) to None (text)": "set NULLED = 5",
         "session variable ODD changed from '2026-10-29' to '2026-10-30'": None,
     }
 
