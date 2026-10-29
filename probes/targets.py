@@ -235,10 +235,15 @@ class Session:
         Not fakesnow's own (its column metadata, temp.main._fs_columns_ext): those it had before the run's first
         statement, known by OID, which DuckDB never reuses, rather than by name, which a case can share.
         """
+        return {name: owner for name, (owner, _) in self.temporary_table_oids().items()}
+
+    def temporary_table_oids(self) -> dict[str, tuple[tuple[str, str] | None, int]]:
+        """fakesnow only: temporary_tables, each with its OID too, which a table replaced under the same name doesn't
+        keep (DuckDB gives the new one its own), and an INSERT or ALTER does."""
         assert self.fakesnow_session, "Snowflake lists temporary tables with SHOW TABLES"
         owners = self.fakesnow_session().temporary_tables.owners()
-        tables = [name for name, oid in self._temporary_oids().items() if oid not in self._fakesnow_own]
-        return {table: _owner(owners.get(table)) for table in tables}
+        oids = {name: oid for name, oid in self._temporary_oids().items() if oid not in self._fakesnow_own}
+        return {name: (_owner(owners.get(name)), oid) for name, oid in oids.items()}
 
     def _temporary_oids(self) -> dict[str, int]:
         """fakesnow only: the main session's temporary tables' OIDs, by name (unique among them)."""

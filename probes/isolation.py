@@ -3,13 +3,15 @@
 Each case runs in a schema of its own, created before its setup and dropped after its teardown, so what it creates
 there can't reach later cases. What still can is checked here, after the drop, against a snapshot from before the
 case (PolDet's approach: Gyori et al., ISSTA 2015). Anything new, gone or changed is a leak: the runner undoes it if
-it can (and leaks aren't kept), so later cases aren't affected, and reports it against the case that left it, with
-what it did about it (outcome.Fate).
+it can (and leaks aren't kept), checks with the next snapshot that undoing it took, and reports it against the case
+that left it, with what it did about it (outcome.Fate).
 
 What's checked, per target:
 
 - schemas in the run's database (except other runs'), databases named after the run, and the main session's
-  temporary tables whose schema still exists: every target (on Snowflake, those in the run's database);
+  temporary tables whose schema still exists: every target (on Snowflake, those in the run's database). A temporary
+  table is known by its identity too (on fakesnow its OID, on Snowflake its creation time), so one replaced under the
+  same name is a change: what the earlier one held is gone;
 - the main session's parameters (SHOW PARAMETERS IN SESSION) and variables (SHOW VARIABLES): Snowflake only.
   fakesnow lists fixed parameters, can't change any but AUTOCOMMIT (which the runner resets), and lists no
   variables even when some are set, so its variables go unchecked;
@@ -19,8 +21,11 @@ What's checked, per target:
 
 The current database and schema aren't: the next case's CREATE SCHEMA makes its own schema current.
 
-A schema, database or temporary table that's gone (an earlier case's, left in place) is reported, never undone: what
-it held went with it.
+A schema, database or temporary table that's gone (an earlier case's, left in place), or a temporary table replaced,
+is reported, never undone: what it held went with it.
+
+A schema not named after the run, left behind or dropped, is reported but never dropped or recreated: on Snowflake
+the database is shared, and another session using it during the run could have done it.
 
 Each SHOW is a round trip to Snowflake, so there the snapshot lists only what the case could have changed, judged
 from its statements by reach() (and objects whenever a temporary table is still there: DROP TABLE doesn't say
@@ -38,7 +43,7 @@ from typing import Any
 import snowflake.connector.errors
 
 from probes.model import Case
-from probes.outcome import Fate, Leak, Scrub
+from probes.outcome import NOT_THE_RUNS, Fate, Leak, Scrub
 from probes.targets import Session, quoted
 
 # The first keyword of a statement that can't change the session (its parameters, variables, autocommit or
@@ -158,9 +163,10 @@ class State:
     """In the run's database."""
     databases: frozenset[str] = frozenset()
     """Named after the run."""
-    temporary_tables: frozenset[tuple[str, str, str]] = frozenset()
-    """The main session's, as (database, schema, name). On fakesnow, also those whose schema is gone (see
-    Session.temporary_tables), which on Snowflake went with it."""
+    temporary_tables: Mapping[tuple[str, str, str], str] = field(default_factory=dict[tuple[str, str, str], str])
+    """The main session's, as (database, schema, name) -> identity: on fakesnow its OID, on Snowflake its creation time
+    (SHOW TABLES' created_on), either of which a table replaced under the same name doesn't keep. On fakesnow, also
+    those whose schema is gone (see Session.temporary_tables), which on Snowflake went with it."""
     context: Mapping[str, str | None] = field(default_factory=dict[str, str | None])
     """The main session's role, warehouse and (on Snowflake) secondary roles."""
     parameters: Mapping[str, Parameter] | None = None
@@ -194,9 +200,15 @@ class Parameter:
 class Change:
     """A difference between two snapshots: a leak, before the runner's done anything about it."""
 
-    description: str
+    what: str
+    """What changed, e.g. "schema DB.S": the same however it changed, so a snapshot after undoing it can tell."""
+    how: str
     undo: str | None
     """SQL that undoes it, if the runner can."""
+
+    @property
+    def description(self) -> str:
+        return f"{self.what} {self.how}"
 
 
 class LeakCheck:
@@ -232,6 +244,12 @@ class LeakCheck:
         if changes and self.cleanup:
             leaks = [self._undo(change) for change in changes]
             after = self.snapshot(listed, self.before)
+            # the snapshot the next case starts from says whether each undo took: no statement more
+            remaining = {change.what for change in self.changes(self.before, after)}
+            leaks = [
+                replace(leak, fate=Fate.UNDO_DIDNT_TAKE) if leak.fate is Fate.UNDONE and what in remaining else leak
+                for leak, what in zip(leaks, (change.what for change in changes), strict=True)
+            ]
         else:
             leaks = [Leak(c.description, Fate.KEPT if c.undo else Fate.NOT_UNDONE) for c in changes]
         self.before = after
@@ -276,7 +294,7 @@ class LeakCheck:
         databases = {str(d["name"]) for d in found if str(d["name"]).startswith(names.run)}
         # not TERSE: its kind is TABLE for a temporary table too; only the full listing says TEMPORARY
         tables = {
-            (str(t["database_name"]), str(t["schema_name"]), str(t["name"]))
+            (str(t["database_name"]), str(t["schema_name"]), str(t["name"])): str(t["created_on"])
             for t in self._show(f"tables in database {names.database}")
             if str(t["kind"]).upper() == "TEMPORARY"
         }
@@ -284,7 +302,7 @@ class LeakCheck:
             state,
             schemas=frozenset(s for s in schemas if not names.is_other_run(s)),
             databases=frozenset(databases),
-            temporary_tables=frozenset(tables),
+            temporary_tables=tables,
         )
 
     def _fakesnow_objects(self, state: State) -> State:
@@ -300,12 +318,12 @@ class LeakCheck:
             if not names.is_other_run(str(name)):
                 found[str(kind)].add(str(name))
         # one fakesnow didn't record is in DuckDB's temp catalog, as far as anyone can tell
-        tables = {(*(owner or ("temp", "main")), name) for name, owner in self.session.temporary_tables().items()}
+        tables = {
+            (*(owner or ("temp", "main")), name): str(oid)
+            for name, (owner, oid) in self.session.temporary_table_oids().items()
+        }
         return replace(
-            state,
-            schemas=frozenset(found["schema"]),
-            databases=frozenset(found["database"]),
-            temporary_tables=frozenset(tables),
+            state, schemas=frozenset(found["schema"]), databases=frozenset(found["database"]), temporary_tables=tables
         )
 
     def changes(self, before: State, after: State) -> Iterator[Change]:
@@ -317,17 +335,21 @@ class LeakCheck:
             # On Snowflake, only what's named after the run is certainly the run's to drop: the database is shared.
             return not snowflake or schema.startswith(names.run)
 
+        def whose(schema: str) -> str:
+            # another session using the database during the run could have made the change: Leak.not_the_runs
+            return "" if mine(schema) else f", {NOT_THE_RUNS}"
+
         for name in sorted(after.schemas - before.schemas):
-            where = f"{names.database}.{name}"
             undo = f"drop schema if exists {names.database}.{quoted(name)} cascade" if mine(name) else None
-            yield Change(f"schema {where} left behind" + ("" if mine(name) else ", not named after the run"), undo)
+            yield Change(f"schema {names.database}.{name}", "left behind" + whose(name), undo)
         for name in sorted(before.schemas - after.schemas):
-            yield Change(f"schema {names.database}.{name} dropped", None)
+            yield Change(f"schema {names.database}.{name}", "dropped" + whose(name), None)
         for name in sorted(after.databases - before.databases):
-            yield Change(f"database {name} left behind", f"drop database if exists {quoted(name)} cascade")
+            yield Change(f"database {name}", "left behind", f"drop database if exists {quoted(name)} cascade")
         for name in sorted(before.databases - after.databases):
-            yield Change(f"database {name} dropped", None)
-        for database, schema, name in sorted(after.temporary_tables - before.temporary_tables):
+            yield Change(f"database {name}", "dropped", None)
+        old_tables, new_tables = before.temporary_tables, after.temporary_tables
+        for database, schema, name in sorted(new_tables.keys() - old_tables.keys()):
             # Snowflake drops a permanent table of the same name if the temporary one is already gone: only in the
             # run's schemas. fakesnow keeps temporary tables in temp.main, which holds nothing else.
             if snowflake:
@@ -335,21 +357,25 @@ class LeakCheck:
                 undo = f"drop table if exists {where}" if mine(schema) else None
             else:
                 undo = f"drop table if exists temp.main.{quoted(name)}"
-            yield Change(f"temporary table {database}.{schema}.{name} left behind", undo)
-        for database, schema, name in sorted(before.temporary_tables - after.temporary_tables):
+            yield Change(f"temporary table {database}.{schema}.{name}", "left behind", undo)
+        for database, schema, name in sorted(old_tables.keys() - new_tables.keys()):
             # its rows are gone with it: there's nothing to put back
-            yield Change(f"temporary table {database}.{schema}.{name} dropped", None)
+            yield Change(f"temporary table {database}.{schema}.{name}", "dropped", None)
+        for key in sorted(old_tables.keys() & new_tables.keys()):
+            if old_tables[key] != new_tables[key]:
+                # dropped and created again, or CREATE OR REPLACE: the earlier one's rows are gone, as when dropped
+                yield Change("temporary table {}.{}.{}".format(*key), "replaced", None)
         for key, old in before.context.items():
             new = after.context.get(key)
             if new != old:
-                yield Change(f"session {key} changed from {old} to {new}", _context_undo(key, old))
+                yield Change(f"session {key}", f"changed from {old} to {new}", _context_undo(key, old))
         old_parameters, new_parameters = before.parameters or {}, after.parameters or {}
         for key in sorted(old_parameters.keys() & new_parameters.keys()):
             old, new = old_parameters[key], new_parameters[key]
             # an equal value set in the session is a change too: it's no longer inherited, or the other way round
             if (new.value, new.type, new.session_set) != (old.value, old.type, old.session_set):
-                description = f"session parameter {key} changed from {old.shown(new)} to {new.shown(old)}"
-                yield Change(description, _parameter_undo(key, old))
+                how = f"changed from {old.shown(new)} to {new.shown(old)}"
+                yield Change(f"session parameter {key}", how, _parameter_undo(key, old))
         if before.variables is not None and after.variables is not None:
             yield from _variable_changes(before.variables, after.variables)
 
@@ -376,16 +402,16 @@ def _variable_changes(
     before: Mapping[str, tuple[str | None, str]], after: Mapping[str, tuple[str | None, str]]
 ) -> Iterator[Change]:
     for name in sorted(after.keys() - before.keys()):
-        yield Change(f"session variable {name} set to {after[name][0]!r}", f"unset {_identifier(name)}")
+        yield Change(f"session variable {name}", f"set to {after[name][0]!r}", f"unset {_identifier(name)}")
     for name in sorted(before.keys() - after.keys()):
         value = _variable_literal(*before[name])
-        yield Change(f"session variable {name} unset", value and f"set {_identifier(name)} = {value}")
+        yield Change(f"session variable {name}", "unset", value and f"set {_identifier(name)} = {value}")
     for name in sorted(before.keys() & after.keys()):
         (old, old_type), (new, new_type) = before[name], after[name]
         if (new, new_type) != (old, old_type):
             value = _variable_literal(old, old_type)
-            description = f"session variable {name} changed from {_shown(old, old_type, new_type)} to "
-            yield Change(description + _shown(new, new_type, old_type), value and f"set {_identifier(name)} = {value}")
+            how = f"changed from {_shown(old, old_type, new_type)} to {_shown(new, new_type, old_type)}"
+            yield Change(f"session variable {name}", how, value and f"set {_identifier(name)} = {value}")
 
 
 def _shown(value: str | None, kind: str, other_kind: str) -> str:

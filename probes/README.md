@@ -84,6 +84,11 @@ with the literal run schema prefix (that's how cases name anything they create o
 `STATEMENT_TIMEOUT_IN_SECONDS = 60`, `QUERY_TAG = 'fakesnow-probes'` and `AUTOCOMMIT = TRUE`, all set in the session
 at login (so the runner turning autocommit back on after a case isn't a leak). fakesnow runs in a database of the
 same name, so names in outcomes line up. Database names must be simple unquoted SQL identifiers.
+
+A live run needs the probe database to itself: nothing else should create or drop schemas in it during the run.
+The leak check lists every schema in the database, so one another session creates or drops while a case runs is
+reported against that case, as a schema "not named after the run", and makes the case an error. The runner never
+drops or recreates such a schema, and the error says another session could have been the cause.
 Cleanup requires a working Snowflake connection; process termination or network/account outages can still
 require manual cleanup of the printed run schema.
 
@@ -122,19 +127,25 @@ Expected differences only apply when the reference is Snowflake (or a recorded S
 
 A leak (see [Isolation](#isolation)) is reported against the case that left it, naming what it left, and listed
 in its own section of the terminal summary and the Markdown report, marked with what the runner did about it:
-`undone`, `kept` (with `--keep-leaks`), `not undone` (it can't be: a dropped schema or table, say) or `undoing it
-failed`. The reports say later cases weren't affected only when every leak was undone. The JSON report records each
+`undone`, `kept` (with `--keep-leaks`), `not undone` (it can't be: a dropped or replaced table, say), `undoing it
+failed` (the undo statement raised), or `undoing it didn't take` (it ran, but the snapshot after it still found the
+leak). A leak is `undone` only when that snapshot, which the runner takes anyway as the next case's "before", no
+longer finds it, so the reports' "later cases ran without them", said only when every leak was undone, is checked
+rather than assumed (for what the leak check lists: what a table holds, say, isn't). The JSON report records each
 leak's fate; one recorded before fates were shows its leaks as recorded, claiming neither.
 
 | leaked on | status |
 |---|---|
-| Snowflake (run now, or recorded with leak data) | error, whatever the targets did: the case must undo it in its teardown |
+| Snowflake (run now, or recorded with leak data) | error, whatever the targets did: the case must undo it in its teardown (for a schema not named after the run, the error says another session using the database could have left or dropped it instead) |
 | a fakesnow target only | a difference, like any other: unexpected unless marked and pinned (the pin covers the leaks) |
 | a fakesnow target, with a recorded reference from before the leak check | error: whether the reference leaked the same is unknown, so it can't be classified (or pinned) as a difference; rerun the case against the reference |
 
-Cases that leak nothing keep their fingerprints and pins, and so do those that do: what's compared is what leaked,
-and why the runner couldn't undo it if it couldn't, not whether this run undid or kept it. The summary and the Markdown report end with what the leak
-check covered on each target, including "not checked" for a recorded reference from before it.
+Cases that leak nothing keep their fingerprints and pins. For those that do, what's compared is what leaked and,
+when the runner couldn't undo it, why: `(not undone)`, `(undoing it failed: <codes>)` or `(undoing it didn't
+take)`; never `undone` or `kept`. So a pin holds with or without `--keep-leaks` for a leak that's undone, and for one
+with no possible undo, which carries `(not undone)` either way. It doesn't for a leak whose undo fails or doesn't
+take: with `--keep-leaks` the runner doesn't try, so it's compared without the suffix. The summary and the Markdown report end with what the leak check covered on each target, including "not
+checked" for a recorded reference from before it.
 
 ## Isolation
 
@@ -155,15 +166,16 @@ could have changed the session, and the next case's `CREATE SCHEMA` makes that c
 
 After each case's teardown and schema drop, a leak check compares a snapshot of shared state with the one from
 before the case (PolDet's approach, Gyori et al., ISSTA 2015). Anything new, gone or changed is a leak: the
-runner undoes what it can, so later cases aren't affected, and reports it against the case. Something gone (a
-schema, database or temporary table that was there before the case, left by an earlier one) is reported but never
-undone: what it held went with it.
+runner undoes what it can, checks in the next snapshot that each undo took, and reports it against the case.
+Something gone (a schema, database or temporary table that was there before the case, left by an earlier one), or
+a temporary table replaced under the same name (dropped and created again, or `CREATE OR REPLACE`), is reported but
+never undone: what it held went with it, and the runner never tries to put its rows back.
 
 | | Snowflake | fakesnow, fakesnow-server |
 |---|---|---|
 | schemas in the run's database (not other runs') | `SHOW TERSE SCHEMAS` | yes |
-| databases named after the run | `SHOW TERSE DATABASES LIKE` | yes, but fakesnow can't drop a database, so one left behind stays (reported as not undone) |
-| the main session's temporary tables | in the run's database, `SHOW TABLES` (`TERSE` lists a temporary table's kind as `TABLE`) | yes, also those whose schema was dropped (see below) |
+| databases named after the run | `SHOW TERSE DATABASES LIKE` | yes, but fakesnow can't drop a database, so one left behind stays (reported as `undoing it failed`, or `kept` with `--keep-leaks`) |
+| the main session's temporary tables, by name and identity (one replaced under the same name is a change) | in the run's database, `SHOW TABLES` (`TERSE` lists a temporary table's kind as `TABLE`), identified by its `created_on` | yes, also those whose schema was dropped (see below), identified by DuckDB's table OID (kept by `INSERT` and `ALTER`, new on replacement) |
 | session parameters, by value, type and whether set in the session (an inherited value set in the session, or one set in the session unset, is a leak even when the value stays the same) | `SHOW PARAMETERS IN SESSION`; one that was inherited (`level` not `SESSION`) is undone with `ALTER SESSION UNSET`, one set in the session with `ALTER SESSION SET` | no: fakesnow lists fixed values, and can't change any parameter but autocommit, which the runner resets |
 | session variables (`SET`), by value (NULL included) and type | `SHOW VARIABLES`, undone with `UNSET`, or `SET` to a literal of the same type (`CAST(NULL AS VARCHAR)` for NULL: `SHOW VARIABLES` lists every NULL as text, whatever its type) | unchecked: fakesnow's `SHOW VARIABLES` lists none, even when some are set; the reports say so |
 | role and warehouse (as the connector reports them, no round trip) | yes | no: fakesnow has neither |
@@ -206,7 +218,8 @@ first statement, not by its `_fs_` prefix, which a case's table can share.
 On Snowflake the runner only drops a leaked schema or temporary table that is named after the run (a temporary
 table, by its schema): the database may be shared, a schema with another name may not be the run's, and `DROP
 TABLE` drops a permanent table of the same name if the temporary one is gone. Not covered on any target: objects
-outside the run's database not named after it (roles, warehouses, other databases' schemas).
+outside the run's database not named after it (roles, warehouses, other databases' schemas), and what a temporary
+table holds (rows a later case adds to one left in place aren't a change; replacing it is).
 
 ### Order-dependent cases
 
