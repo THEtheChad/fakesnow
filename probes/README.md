@@ -78,7 +78,7 @@ key-file path/passphrase and connector-recognised tokens. Cases are trusted Pyth
 in case source, returned data or SQL literals, which are intentionally included in reports.
 
 Each run creates `<database>.PROBES_<timestamp>_<random>`, and each case runs in a schema of its own named after it,
-`<run schema>_C<n>` (see [Isolation](#isolation)). The run drops its schema at the end, also on exceptions and
+`<run schema>_C<hash>` (see [Isolation](#isolation)). The run drops its schema at the end, also on exceptions and
 KeyboardInterrupt, using an independent cleanup connection, along with any schema or database whose name starts
 with the literal run schema prefix (that's how cases name anything they create outside their own schema). Snowflake sessions get `TIMEZONE = 'UTC'` (fakesnow's zone),
 `STATEMENT_TIMEOUT_IN_SECONDS = 60` and `QUERY_TAG = 'fakesnow-probes'`. fakesnow runs in a database of the
@@ -97,8 +97,11 @@ minutes against an X-Small warehouse, most of it round trips and metadata. Keep 
 - iterate on fakesnow against a `--baseline` rather than rerunning Snowflake; a new or changed case needs a new
   Snowflake run (cases that aren't in the baseline report an error), and so do results you report.
 
-Isolation adds three statements per case on Snowflake (create and drop the case's schema, and the leak check's
-snapshot), and one more after cases that could change a session parameter, see [Isolation](#isolation).
+Isolation adds two statements per case on Snowflake (create and drop the case's schema), three SHOWs after a case
+that could change a schema, database or temporary table, and two more after one that could change the session; the
+runner also resets the session (rollback, autocommit) only after those. For the 384 cases as of this writing:
+768 statements for the schemas, 117 and 66 SHOWs after the 39 and 33 cases that need them, and 66 resets instead of
+768. See [Isolation](#isolation).
 
 ## Statuses
 
@@ -107,10 +110,10 @@ For each case and fakesnow target:
 | status | meaning | fails the run |
 |---|---|---|
 | match | same outcome as the reference | no |
-| unexpected difference | differs without a mark, has no reviewed fingerprint, or the pinned behavior changed; a leak only on the target counts as a difference | yes |
+| unexpected difference | differs without a mark, has no reviewed fingerprint, or the pinned behavior changed; a leak only on the target counts as a difference (when the reference's leaks were checked) | yes |
 | expected difference | differs, and both outcomes match the reviewed fingerprint for this target | no |
 | expected difference now matches | marked, but matches: a fix landed, remove the mark | no |
-| error | the case can't be judged: its setup or Python probe failed on the reference, it leaked on Snowflake, the harness crashed, or (with `--baseline`) the case is new or changed since the recorded run | yes |
+| error | the case can't be judged: its setup or Python probe failed on the reference, it leaked on Snowflake, the harness crashed, (with `--baseline`) the case is new or changed since the recorded run, or it leaked on the target and the recorded reference's leaks weren't checked | yes |
 
 Expected differences only apply when the reference is Snowflake (or a recorded Snowflake run). With
 `--reference fakesnow`, any difference between in-process and server mode is unexpected, leaks included.
@@ -122,21 +125,23 @@ in its own section of the terminal summary and the Markdown report:
 |---|---|
 | Snowflake (run now, or recorded with leak data) | error, whatever the targets did: the case must undo it in its teardown |
 | a fakesnow target only | a difference, like any other: unexpected unless marked and pinned (the pin covers the leaks) |
-| a fakesnow target, with a recorded Snowflake run from before the leak check | a difference: the reference counts as not having leaked |
+| a fakesnow target, with a recorded reference from before the leak check | error: whether the reference leaked the same is unknown, so it can't be classified (or pinned) as a difference; rerun the case against the reference |
 
-Cases that leak nothing keep their fingerprints and pins.
+Cases that leak nothing keep their fingerprints and pins. The summary and the Markdown report end with what the leak
+check covered on each target, including "not checked" for a recorded reference from before it.
 
 ## Isolation
 
-Each case runs in a fresh schema, `<run schema>_C<n>` for the run's n-th case, created before its setup and
+Each case runs in a fresh schema, `<run schema>_C<hash>` (the first 8 hex digits of the SHA-256 of the case's id:
+the same name in every run, order and selection, and as long as any other case's), created before its setup and
 dropped (with everything in it) after its teardown, on every target. `{schema}` is that schema, the main session
 is in it when the case starts, `ctx.connect()` opens sessions in it, and outcomes show it as `{schema}`, so
 tables, views, stages, sequences and temporary tables never reach another case and need no teardown.
 
 What dropping the schema doesn't undo still needs a teardown: schemas and databases a case creates outside it
 (named starting with `{schema}`), and changes to the main session (`ALTER SESSION`, `USE ROLE`, `USE WAREHOUSE`).
-The runner already resets the rest after every case: it rolls back, turns autocommit on, and the next case's
-`CREATE SCHEMA` makes that case's schema current, whatever `USE` came before.
+The runner resets the rest: after a case that could have changed the session (see below) it rolls back and turns
+autocommit on, and the next case's `CREATE SCHEMA` makes that case's schema current, whatever `USE` came before.
 
 After each case's teardown and schema drop, a leak check compares a snapshot of shared state with the one from
 before the case (PolDet's approach, Gyori et al., ISSTA 2015). Anything new, gone or changed is a leak: the
@@ -144,14 +149,39 @@ runner undoes what it can, so later cases aren't affected, and reports it agains
 
 | | Snowflake | fakesnow, fakesnow-server |
 |---|---|---|
-| schemas in the run's database (not other runs') | yes | yes |
-| databases named after the run | yes | yes, but fakesnow can't drop a database, so one left behind stays (reported as not undone) |
-| session parameters (`SHOW PARAMETERS IN SESSION`) | after Python probes and SQL with `ALTER SESSION`, `CALL`, `EXECUTE IMMEDIATE`, `BEGIN` or `DECLARE`: each SHOW is a round trip | no: fakesnow lists fixed values, and can't change any parameter but autocommit, which the runner resets |
+| schemas in the run's database (not other runs') | `SHOW TERSE SCHEMAS` | yes |
+| databases named after the run | `SHOW TERSE DATABASES LIKE` | yes, but fakesnow can't drop a database, so one left behind stays (reported as not undone) |
+| the main session's temporary tables whose schema still exists | in the run's database, `SHOW TERSE TABLES` | yes |
+| session parameters | `SHOW PARAMETERS IN SESSION` | no: fakesnow lists fixed values, and can't change any parameter but autocommit, which the runner resets |
+| session variables (`SET`) | `SHOW VARIABLES`, undone with `UNSET` | unchecked: fakesnow's `SHOW VARIABLES` lists none, even when some are set; the reports say so |
 | role and warehouse (as the connector reports them, no round trip) | yes | no: fakesnow has neither |
-| temporary tables | dropped with the schema | fakesnow keeps them after their schema is dropped (case `ddl.drop-schema-drops-temporary-table`): the runner drops the ones a case created, without reporting them |
 
-On Snowflake the runner only drops a leaked schema that is named after the run: the database may be shared, and a
-schema with another name may not be the run's. Not covered on any target: session variables (`SET`), and objects
+Every SHOW on Snowflake is a metadata round trip (no warehouse needed), so there they run only after a case that
+could change what they list, judged from its statements with comments, strings and quoted names stripped:
+
+- a Python probe, or a statement the scan can't place (more than one statement, an unterminated string or comment,
+  anything but a keyword first), could change anything;
+- `SELECT`, `WITH`, `VALUES`, `SHOW`, `DESC[RIBE]`, `EXPLAIN`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`, `COPY`,
+  `TRUNCATE`, `LIST`/`LS`, `GET`, `PUT`, `REMOVE`/`RM`, `COMMENT`, `COMMIT`, `ROLLBACK` and `USE` change nothing
+  listed: none can set a parameter or variable, start a transaction or turn autocommit off, or create or drop a
+  schema, database or table outside the case's schema (`USE` changes the current schema, which the next case
+  resets, or the role and warehouse, which are read without a round trip);
+- `CREATE`, `DROP` and `UNDROP` can't change the session either, and change what's listed only when they name a
+  schema, database or temporary table (`SCHEMA`, `DATABASE`, `TEMPORARY`, `TEMP` or `VOLATILE`);
+- anything else could change anything: `ALTER` (`ALTER SESSION`, `USER` and `ACCOUNT` set parameters), `SET`,
+  `UNSET`, `BEGIN`, `CALL`, `EXECUTE IMMEDIATE`, `DECLARE`, `GRANT`, ...
+
+fakesnow's snapshot is in-process (or local) and lists everything after every case. With `--keep-leaks`, Snowflake's
+does too: a later case could undo a leak left in place without the snapshot noticing.
+
+DuckDB keeps all temporary tables in one catalog, so fakesnow's outlive the schema they belong to (case
+`ddl.drop-schema-drops-temporary-table`). When a case's schema is dropped, the runner drops the fakesnow
+temporary tables whose schema is gone, as Snowflake would have, without reporting them; a temporary table whose
+schema still exists (the run's, say) is a leak, as on Snowflake.
+
+On Snowflake the runner only drops a leaked schema or temporary table that is named after the run (a temporary
+table, by its schema): the database may be shared, a schema with another name may not be the run's, and `DROP
+TABLE` drops a permanent table of the same name if the temporary one is gone. Not covered on any target: objects
 outside the run's database not named after it (roles, warehouses, other databases' schemas).
 
 ### Order-dependent cases
@@ -163,7 +193,7 @@ leak check, verdicts shouldn't depend on the order: if a case's does, something 
 `--find-polluter ID`, with the selection and order (`-k`, `--shuffle SEED`, `--order`) of the run where `ID`
 changed, finds which cases before it change its outcome, like RSpec's `--bisect`. It runs the case alone, then
 after the cases before it, and if its outcome changes, narrows those down by delta debugging to a smallest set
-that still changes it, each trial on a fresh target. "Changes" is the case's own comparison (a case comparing
+that still changes it, each trial on a fresh target (for `fakesnow-server`, a fakesnow instance of its own). "Changes" is the case's own comparison (a case comparing
 types only isn't changed by other values). It runs on one fakesnow `--target` (default `fakesnow`), never
 Snowflake, and prints the polluters, how they change the case, and a command that reproduces it with `--order`.
 It runs with the leak check's cleanup, as a normal run does, so it finds what the check misses; add
@@ -328,7 +358,10 @@ Their files import `probes` like the ones here. Tables a query needs go in `setu
   so formatting and comments don't count). Imported helpers and dependency versions are not fingerprinted;
   regenerate live baselines and review pins when those change.
 - `fakesnow.server()` can only be called once per process (importing `fakesnow.server` shadows the function),
-  so probes keeps a reference to it from import time. Every server in a process shares one fakesnow instance, so
-  the fakesnow-server target drops the run's schemas when it closes (as `--find-polluter` starts one per trial);
-  a database a case leaves behind stays, as fakesnow can't drop one.
+  so probes keeps a reference to it from import time. Every server in a process serves one fakesnow instance
+  (`fakesnow.server.shared_fs`), so the fakesnow-server target swaps in a fresh instance of its own while it's
+  open: nothing one run leaves there (fakesnow can't drop a database) reaches the next, a `--find-polluter` trial
+  say.
+- A recorded outcome is reused for a Python probe only while its module is unchanged, so marking a difference in a
+  module with Python probes (editing `expected=`) needs those probes rerun against Snowflake.
 - Runs are sequential, one target after another, in one session per target (plus any a probe opens).
