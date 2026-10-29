@@ -404,15 +404,11 @@ def _parameter_undo(key: str, old: Parameter) -> str | None:
 
 
 def _variable_literal(value: str | None, kind: str) -> str | None:
-    """A variable's value as SQL of its type (SQL NULL too); None when unsure, so it's reported, not undone."""
-    if value is None:
-        sql_type = _NULL_TYPES.get(kind.lower())
-        return sql_type and f"cast(null as {sql_type})"
-    return _literal(value, kind)
+    """A variable's value as SQL of its type; None when unsure, so it's reported, not undone.
 
-
-# SHOW VARIABLES' types, and the SQL type of a NULL of each
-_NULL_TYPES = {"fixed": "number", "real": "double", "boolean": "boolean", "text": "varchar"}
+    SHOW VARIABLES lists every NULL as text, whatever it was cast to: its type is gone, so a NULL is set back as text.
+    """
+    return "cast(null as varchar)" if value is None else _literal(value, kind)
 
 
 def _literal(value: str | None, kind: str) -> str | None:
