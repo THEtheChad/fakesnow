@@ -172,6 +172,8 @@ def test_a_server_target_forgets_its_sessions_on_the_way_out_and_only_its_own():
     server: Any = importlib.import_module("fakesnow.server")
     unrelated = FakeSnow().connect()  # another instance's session, as another server user's would be
     server.sessions["unrelated"] = unrelated
+    # sessions other tests in this process left behind are as unrelated as this one
+    others = dict(server.sessions)
 
     def opens_another(conn: Any, ctx: Any) -> int:
         ctx.connect()
@@ -180,7 +182,7 @@ def test_a_server_target_forgets_its_sessions_on_the_way_out_and_only_its_own():
     cases = [select("a"), Case(id="b", description="d", run=opens_another)]
     try:
         run_target(FAKESNOW_SERVER, cases, Names.new("PROBES"))
-        assert server.sessions == {"unrelated": unrelated}
+        assert server.sessions == others
 
         def fails(target: str, case: Case) -> None:
             if case.id == "b":
@@ -188,7 +190,7 @@ def test_a_server_target_forgets_its_sessions_on_the_way_out_and_only_its_own():
 
         with pytest.raises(RuntimeError, match="interrupted"):
             run_target(FAKESNOW_SERVER, cases, Names.new("PROBES"), progress=fails)
-        assert server.sessions == {"unrelated": unrelated}
+        assert server.sessions == others
     finally:
         server.sessions.pop("unrelated", None)
 
