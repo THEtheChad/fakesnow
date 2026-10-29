@@ -2,8 +2,9 @@
 
 Each case runs in a schema of its own, created before its setup and dropped after its teardown, so what it creates
 there can't reach later cases. What still can is checked here, after the drop, against a snapshot from before the
-case (PolDet's approach: Gyori et al., ISSTA 2015). Anything new, gone or changed is a leak: the runner undoes it, so
-later cases aren't affected, and reports it against the case that left it.
+case (PolDet's approach: Gyori et al., ISSTA 2015). Anything new, gone or changed is a leak: the runner undoes it if
+it can (and leaks aren't kept), so later cases aren't affected, and reports it against the case that left it, with
+what it did about it (outcome.Fate).
 
 What's checked, per target:
 
@@ -37,7 +38,7 @@ from typing import Any
 import snowflake.connector.errors
 
 from probes.model import Case
-from probes.outcome import Scrub
+from probes.outcome import Fate, Leak, Scrub
 from probes.targets import Session, quoted
 
 # The first keyword of a statement that can't change the session (its parameters, variables, autocommit or
@@ -190,7 +191,9 @@ class Parameter:
 
 
 @dataclass(frozen=True)
-class Leak:
+class Change:
+    """A difference between two snapshots: a leak, before the runner's done anything about it."""
+
     description: str
     undo: str | None
     """SQL that undoes it, if the runner can."""
@@ -218,20 +221,21 @@ class LeakCheck:
             )
         return "schemas, databases, temporary tables; variables unchecked (fakesnow doesn't list them)"
 
-    def after(self, case: Case, scrub: Scrub) -> tuple[str, ...]:
-        """What the case leaked, with run-specific names scrubbed, once it's been undone."""
+    def after(self, case: Case, scrub: Scrub) -> tuple[Leak, ...]:
+        """What the case leaked, with run-specific names scrubbed, once it's been undone (unless it's kept)."""
         listed = reach(case) if self.cleanup else EVERYTHING
         if self.before.temporary_tables:
             # a DROP TABLE doesn't say TEMPORARY: it could drop one that an earlier case left and the runner couldn't
             listed = replace(listed, objects=True)
         after = self.snapshot(listed, self.before)
-        leaks = list(self.changes(self.before, after))
-        descriptions = [leak.description for leak in leaks]
-        if leaks and self.cleanup:
-            descriptions = [self._undo(leak) for leak in leaks]
+        changes = list(self.changes(self.before, after))
+        if changes and self.cleanup:
+            leaks = [self._undo(change) for change in changes]
             after = self.snapshot(listed, self.before)
+        else:
+            leaks = [Leak(c.description, Fate.KEPT if c.undo else Fate.NOT_UNDONE) for c in changes]
         self.before = after
-        return tuple(scrub(d) for d in descriptions)
+        return tuple(replace(leak, description=scrub(leak.description)) for leak in leaks)
 
     def snapshot(self, listed: Reach, unlisted: State) -> State:
         """List what's shared that a case could have changed; the rest is as in unlisted."""
@@ -304,8 +308,8 @@ class LeakCheck:
             temporary_tables=frozenset(tables),
         )
 
-    def changes(self, before: State, after: State) -> Iterator[Leak]:
-        """The leaks between two snapshots, each with how to undo it."""
+    def changes(self, before: State, after: State) -> Iterator[Change]:
+        """The changes between two snapshots, each with how to undo it."""
         names = self.session.run_names
         snowflake = self.session.is_snowflake
 
@@ -316,13 +320,13 @@ class LeakCheck:
         for name in sorted(after.schemas - before.schemas):
             where = f"{names.database}.{name}"
             undo = f"drop schema if exists {names.database}.{quoted(name)} cascade" if mine(name) else None
-            yield Leak(f"schema {where} left behind" + ("" if mine(name) else ", not named after the run"), undo)
+            yield Change(f"schema {where} left behind" + ("" if mine(name) else ", not named after the run"), undo)
         for name in sorted(before.schemas - after.schemas):
-            yield Leak(f"schema {names.database}.{name} dropped", None)
+            yield Change(f"schema {names.database}.{name} dropped", None)
         for name in sorted(after.databases - before.databases):
-            yield Leak(f"database {name} left behind", f"drop database if exists {quoted(name)} cascade")
+            yield Change(f"database {name} left behind", f"drop database if exists {quoted(name)} cascade")
         for name in sorted(before.databases - after.databases):
-            yield Leak(f"database {name} dropped", None)
+            yield Change(f"database {name} dropped", None)
         for database, schema, name in sorted(after.temporary_tables - before.temporary_tables):
             # Snowflake drops a permanent table of the same name if the temporary one is already gone: only in the
             # run's schemas. fakesnow keeps temporary tables in temp.main, which holds nothing else.
@@ -331,34 +335,34 @@ class LeakCheck:
                 undo = f"drop table if exists {where}" if mine(schema) else None
             else:
                 undo = f"drop table if exists temp.main.{quoted(name)}"
-            yield Leak(f"temporary table {database}.{schema}.{name} left behind", undo)
+            yield Change(f"temporary table {database}.{schema}.{name} left behind", undo)
         for database, schema, name in sorted(before.temporary_tables - after.temporary_tables):
             # its rows are gone with it: there's nothing to put back
-            yield Leak(f"temporary table {database}.{schema}.{name} dropped", None)
+            yield Change(f"temporary table {database}.{schema}.{name} dropped", None)
         for key, old in before.context.items():
             new = after.context.get(key)
             if new != old:
-                yield Leak(f"session {key} changed from {old} to {new}", _context_undo(key, old))
+                yield Change(f"session {key} changed from {old} to {new}", _context_undo(key, old))
         old_parameters, new_parameters = before.parameters or {}, after.parameters or {}
         for key in sorted(old_parameters.keys() & new_parameters.keys()):
             old, new = old_parameters[key], new_parameters[key]
             # an equal value set in the session is a change too: it's no longer inherited, or the other way round
             if (new.value, new.type, new.session_set) != (old.value, old.type, old.session_set):
                 description = f"session parameter {key} changed from {old.shown(new)} to {new.shown(old)}"
-                yield Leak(description, _parameter_undo(key, old))
+                yield Change(description, _parameter_undo(key, old))
         if before.variables is not None and after.variables is not None:
             yield from _variable_changes(before.variables, after.variables)
 
-    def _undo(self, leak: Leak) -> str:
-        if leak.undo is None:
-            return f"{leak.description} (not undone)"
+    def _undo(self, change: Change) -> Leak:
+        if change.undo is None:
+            return Leak(change.description, Fate.NOT_UNDONE)
         try:
-            self.session.conn.cursor().execute(leak.undo)
+            self.session.conn.cursor().execute(change.undo)
         except Exception as e:  # in-process, fakesnow can raise more than the connector's errors
             # codes only: a pinned outcome shouldn't depend on the wording of a message
             code = f"{e.errno} ({e.sqlstate})" if isinstance(e, snowflake.connector.errors.Error) else type(e).__name__
-            return f"{leak.description} (undoing it failed: {code})"
-        return leak.description
+            return Leak(change.description, Fate.UNDO_FAILED, code)
+        return Leak(change.description, Fate.UNDONE)
 
     def _show(self, what: str) -> list[dict[str, Any]]:
         """A SHOW's rows, by lower-case column name."""
@@ -370,18 +374,18 @@ class LeakCheck:
 
 def _variable_changes(
     before: Mapping[str, tuple[str | None, str]], after: Mapping[str, tuple[str | None, str]]
-) -> Iterator[Leak]:
+) -> Iterator[Change]:
     for name in sorted(after.keys() - before.keys()):
-        yield Leak(f"session variable {name} set to {after[name][0]!r}", f"unset {_identifier(name)}")
+        yield Change(f"session variable {name} set to {after[name][0]!r}", f"unset {_identifier(name)}")
     for name in sorted(before.keys() - after.keys()):
         value = _variable_literal(*before[name])
-        yield Leak(f"session variable {name} unset", value and f"set {_identifier(name)} = {value}")
+        yield Change(f"session variable {name} unset", value and f"set {_identifier(name)} = {value}")
     for name in sorted(before.keys() & after.keys()):
         (old, old_type), (new, new_type) = before[name], after[name]
         if (new, new_type) != (old, old_type):
             value = _variable_literal(old, old_type)
             description = f"session variable {name} changed from {_shown(old, old_type, new_type)} to "
-            yield Leak(description + _shown(new, new_type, old_type), value and f"set {_identifier(name)} = {value}")
+            yield Change(description + _shown(new, new_type, old_type), value and f"set {_identifier(name)} = {value}")
 
 
 def _shown(value: str | None, kind: str, other_kind: str) -> str:

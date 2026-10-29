@@ -3,6 +3,7 @@
 import importlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,10 +18,10 @@ from probes.compare import Status, classify, comparison_fingerprint
 from probes.isolation import EVERYTHING, LeakCheck, Parameter, Reach, State, changes_context, reach
 from probes.loader import LoadError, load_cases
 from probes.model import Case, Expected
-from probes.outcome import Column, Outcome, ResultSet, Step, decode, encode, scrubber
+from probes.outcome import Column, Fate, Leak, Outcome, ResultSet, Step, decode, encode, scrubber
 from probes.polluter import ddmin, find_polluters
 from probes.report import leak_scope, load_run, markdown, summary, to_json, write_json
-from probes.runner import compare_runs, run_case, run_target, shuffled
+from probes.runner import Report, compare_runs, run_case, run_target, shuffled
 from probes.targets import FAKESNOW, FAKESNOW_SERVER, SNOWFLAKE, Names, Session, TargetError, open_target
 
 CASES = """
@@ -73,6 +74,11 @@ CASES = [
     ),
 ]
 """
+
+
+def shown(outcome: Outcome) -> tuple[str, ...] | None:
+    """Its leaks as the reports show them, each with what the runner did about it."""
+    return None if outcome.leaks is None else tuple(map(str, outcome.leaks))
 
 
 def case_dir(tmp_path: Path, name: str, source: str) -> Path:
@@ -186,7 +192,7 @@ def test_leaks_are_reported_against_the_case_and_undone(tmp_path: Path):
         leaked = session.run_names.case("leak.schema").schema + "_L"
         cur.execute(f"select count(*) from information_schema.schemata where schema_name = '{leaked}'")
         assert cur.fetchall() == [(0,)]
-    assert outcomes[0].leaks == ("schema {database}.{schema}_L left behind",)
+    assert shown(outcomes[0]) == ("schema {database}.{schema}_L left behind (undone)",)
     # a temporary table in the case's schema goes with it, as on Snowflake (fakesnow keeps it: the runner drops it)
     assert outcomes[1].leaks == ()
     assert outcomes[2].leaks == ()
@@ -217,7 +223,7 @@ def test_a_temporary_table_outside_the_case_schema_is_a_leak_and_undone(target: 
         check = LeakCheck(session)
         outcome = run_case(temporary_in_run_schema(names), session, check)
         assert run_case(select("next", "select * from home_tt"), session, check).steps[0].error
-    assert outcome.leaks == ("temporary table {database}.{run_schema}.HOME_TT left behind",)
+    assert shown(outcome) == ("temporary table {database}.{run_schema}.HOME_TT left behind (undone)",)
 
 
 def test_keep_leaks_leaves_a_temporary_table_outside_the_case_schema():
@@ -226,7 +232,7 @@ def test_keep_leaks_leaves_a_temporary_table_outside_the_case_schema():
         check = LeakCheck(session, cleanup=False)
         outcome = run_case(temporary_in_run_schema(names), session, check)
         assert run_case(select("next", "select * from home_tt"), session, check).steps[0].error is None
-    assert outcome.leaks == ("temporary table {database}.{run_schema}.HOME_TT left behind",)
+    assert shown(outcome) == ("temporary table {database}.{run_schema}.HOME_TT left behind (kept)",)
 
 
 @pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
@@ -238,7 +244,7 @@ def test_a_temporary_table_dropped_from_outside_the_case_schema_is_a_leak_not_un
         check = LeakCheck(session, cleanup=False)
         run_case(temporary_in_run_schema(names), session, check)
         outcome = run_case(drops, session, check)
-    assert outcome.leaks == ("temporary table {database}.{run_schema}.HOME_TT dropped",)
+    assert shown(outcome) == ("temporary table {database}.{run_schema}.HOME_TT dropped (not undone)",)
 
 
 def test_undoing_a_leak_isnt_a_leak_of_the_next_case():
@@ -284,7 +290,8 @@ def test_a_temporary_table_left_by_dropping_another_schema_is_a_fakesnow_leak(cl
         check = LeakCheck(session, cleanup=cleanup)
         outcome = run_case(DROPS_ITS_OTHER_SCHEMA, session, check)
         again = run_case(select("again", "create temporary table gone_tt (x int)"), session, check)
-    assert outcome.leaks == ("temporary table {database}.{schema}_T.GONE_TT left behind",)
+    fate = "undone" if cleanup else "kept"
+    assert shown(outcome) == (f"temporary table {{database}}.{{schema}}_T.GONE_TT left behind ({fate})",)
     assert (again.steps[0].error is None) == cleanup
 
 
@@ -331,7 +338,8 @@ def test_a_temporary_table_named_like_fakesnows_own_outside_the_case_schema_is_a
         check = LeakCheck(session, cleanup=cleanup)
         outcome = run_case(fs_named, session, check)
         again = run_case(select("next", 'select * from "_fs_user"'), session, check)
-    assert outcome.leaks == ("temporary table {database}.{run_schema}._fs_user left behind",)
+    fate = "undone" if cleanup else "kept"
+    assert shown(outcome) == (f"temporary table {{database}}.{{run_schema}}._fs_user left behind ({fate})",)
     assert again.leaks == ()
     assert (again.steps[0].error is None) == (not cleanup)
 
@@ -368,7 +376,7 @@ def test_a_failed_temporary_table_drop_is_a_note_and_keeps_the_outcome(monkeypat
     assert len(outcome.notes) == 1
     assert outcome.notes[0].startswith("dropping the case's temporary tables failed: a\"b: ")
     # the leak check finds it still there, and drops it with its name quoted properly
-    assert outcome.leaks == ('temporary table {database}.{schema}.a"b left behind',)
+    assert shown(outcome) == ('temporary table {database}.{schema}.a"b left behind (undone)',)
 
 
 AUTOCOMMIT_OFF = Case(
@@ -625,7 +633,7 @@ def test_a_parameter_change_is_blamed_on_the_case_that_made_it_and_undone():
     check = LeakCheck(session)
     changed = select("changes", "ALTER /* c */ SESSION SET TIMEZONE = 'America/New_York'")
     outcomes = [run_case(case, session, check) for case in [changed, select("next"), select("after")]]
-    assert outcomes[0].leaks == ("session parameter TIMEZONE changed from 'UTC' to 'America/New_York'",)
+    assert shown(outcomes[0]) == ("session parameter TIMEZONE changed from 'UTC' to 'America/New_York' (undone)",)
     assert outcomes[1].leaks == outcomes[2].leaks == ()
     assert conn.parameters["TIMEZONE"] == ("UTC", "STRING", "SESSION")
 
@@ -634,8 +642,8 @@ def test_an_inherited_parameter_is_unset_rather_than_set_to_its_value():
     session, conn = stub_session()
     check = LeakCheck(session)
     outcome = run_case(select("changes", "alter session set lock_timeout = 5"), session, check)
-    assert outcome.leaks == (
-        "session parameter LOCK_TIMEOUT changed from '43200' (inherited) to '5' (set in the session)",
+    assert shown(outcome) == (
+        "session parameter LOCK_TIMEOUT changed from '43200' (inherited) to '5' (set in the session) (undone)",
     )
     assert "alter session unset LOCK_TIMEOUT" in conn.statements
     assert conn.parameters["LOCK_TIMEOUT"] == ("43200", "NUMBER", "")
@@ -649,8 +657,8 @@ def test_an_inherited_parameter_set_in_the_session_to_the_same_value_is_a_leak_a
         run_case(case, session, check)
         for case in [select("sets", "alter session set lock_timeout = 43200"), select("next")]
     ]
-    assert outcomes[0].leaks == (
-        "session parameter LOCK_TIMEOUT changed from '43200' (inherited) to '43200' (set in the session)",
+    assert shown(outcomes[0]) == (
+        "session parameter LOCK_TIMEOUT changed from '43200' (inherited) to '43200' (set in the session) (undone)",
     )
     assert outcomes[1].leaks == ()
     assert "alter session unset LOCK_TIMEOUT" in conn.statements
@@ -665,8 +673,8 @@ def test_a_parameter_set_in_the_session_unset_to_the_same_inherited_value_is_a_l
         run_case(case, session, check)
         for case in [select("unsets", "alter session unset lock_timeout"), select("next")]
     ]
-    assert outcomes[0].leaks == (
-        "session parameter LOCK_TIMEOUT changed from '43200' (set in the session) to '43200' (inherited)",
+    assert shown(outcomes[0]) == (
+        "session parameter LOCK_TIMEOUT changed from '43200' (set in the session) to '43200' (inherited) (undone)",
     )
     assert outcomes[1].leaks == ()
     assert "alter session set LOCK_TIMEOUT = 43200" in conn.statements
@@ -679,7 +687,7 @@ def test_the_runs_own_session_parameters_and_its_reset_are_no_leak():
     session, conn = stub_session()
     check = LeakCheck(session)
     outcomes = [run_case(case, session, check) for case in [select("sets", "set v = 1"), python_probe("p", "select 1")]]
-    assert [o.leaks for o in outcomes] == [("session variable V set to '1'",), ()]
+    assert [shown(o) for o in outcomes] == [("session variable V set to '1' (undone)",), ()]
     assert {key for key, (_, _, level) in conn.parameters.items() if level == "SESSION"} == {
         "AUTOCOMMIT",
         "TIMEZONE",
@@ -693,7 +701,7 @@ def test_a_temporary_table_on_snowflake_is_found_by_show_tables_and_dropped():
     session, conn = stub_session()
     check = LeakCheck(session)
     outcome = run_case(select("leaves", "create temporary table {database}.PROBES_X.home_tt (x int)"), session, check)
-    assert outcome.leaks == ("temporary table {database}.{run_schema}.HOME_TT left behind",)
+    assert shown(outcome) == ("temporary table {database}.{run_schema}.HOME_TT left behind (undone)",)
     assert 'drop table if exists "DB"."PROBES_X"."HOME_TT"' in conn.statements
     assert conn.temporary_tables == set()
 
@@ -705,7 +713,7 @@ def test_a_temporary_table_left_in_place_on_snowflake_is_listed_for_a_drop_table
     run_case(select("leaves", "create temporary table {database}.PUBLIC.theirs (x int)"), session, check)
     assert conn.temporary_tables == {("PUBLIC", "THEIRS")}
     dropped = run_case(select("drops", "drop table {database}.PUBLIC.theirs"), session, check)
-    assert dropped.leaks == ("temporary table {database}.PUBLIC.THEIRS dropped (not undone)",)
+    assert shown(dropped) == ("temporary table {database}.PUBLIC.THEIRS dropped (not undone)",)
 
 
 def test_a_null_variable_unset_is_set_back_to_a_null_of_its_type():
@@ -713,7 +721,7 @@ def test_a_null_variable_unset_is_set_back_to_a_null_of_its_type():
     conn.variables["N"] = (None, "text")
     check = LeakCheck(session)
     outcome = run_case(select("unsets", "unset n"), session, check)
-    assert outcome.leaks == ("session variable N unset",)
+    assert shown(outcome) == ("session variable N unset (undone)",)
     assert conn.variables == {"N": (None, "text")}
     assert "set N = cast(null as varchar)" in conn.statements
 
@@ -723,7 +731,7 @@ def test_a_variable_whose_type_changed_is_a_leak():
     conn.variables["V"] = ("1", "fixed")
     check = LeakCheck(session)
     outcome = run_case(select("retypes", "set v = '1'"), session, check)
-    assert outcome.leaks == ("session variable V changed from '1' (fixed) to '1' (text)",)
+    assert shown(outcome) == ("session variable V changed from '1' (fixed) to '1' (text) (undone)",)
     assert conn.variables == {"V": ("1", "fixed")}
 
 
@@ -735,8 +743,8 @@ def test_secondary_roles_a_python_probe_changed_are_a_leak_and_set_back():
     session, conn = stub_session()
     check = LeakCheck(session)
     outcome = run_case(python_probe("secondary", "use secondary roles none"), session, check)
-    assert outcome.leaks == (
-        'session secondary roles changed from {"roles":"","value":"ALL"} to {"roles":"","value":""}',
+    assert shown(outcome) == (
+        'session secondary roles changed from {"roles":"","value":"ALL"} to {"roles":"","value":""} (undone)',
     )
     assert conn.secondary_roles == '{"roles":"","value":"ALL"}'
 
@@ -745,7 +753,7 @@ def test_a_session_variable_is_reported_and_unset():
     session, conn = stub_session()
     check = LeakCheck(session)
     outcomes = [run_case(case, session, check) for case in [select("sets", "SET reviewer_variable=42"), select("next")]]
-    assert outcomes[0].leaks == ("session variable REVIEWER_VARIABLE set to '42'",)
+    assert shown(outcomes[0]) == ("session variable REVIEWER_VARIABLE set to '42' (undone)",)
     assert outcomes[1].leaks == ()
     assert conn.variables == {}
     assert "unset REVIEWER_VARIABLE" in conn.statements
@@ -968,7 +976,7 @@ def test_a_snowflake_leak_and_how_its_undone(after: State, leak: str, undo: str 
 
 
 RESULT = Outcome(steps=(Step("select 1", ResultSet((Column("X", 0),), ((1,),))),))
-LEAKED = ("schema {database}.{schema}_S2 left behind",)
+LEAKED = (Leak("schema {database}.{schema}_S2 left behind", Fate.UNDONE),)
 
 
 def test_a_reference_leak_is_an_error_only_when_the_reference_is_snowflake():
@@ -1043,14 +1051,111 @@ def test_leaks_round_trip_and_old_reports_have_none():
     assert decode(unchecked).leaks is None
 
 
-def test_reports_list_leaks(tmp_path: Path):
+def test_whether_a_leak_was_undone_or_kept_isnt_a_difference():
+    undone = Outcome(steps=RESULT.steps, leaks=LEAKED)
+    kept = Outcome(steps=RESULT.steps, leaks=(replace(LEAKED[0], fate=Fate.KEPT),))
+    assert classify(select("a"), undone, kept, FAKESNOW_SERVER, with_expected=False).status is Status.MATCH
+
+
+@pytest.mark.parametrize(
+    ("recorded", "leak"),
+    [
+        ("schema S left behind", Leak("schema S left behind", Fate.UNDONE)),
+        ("schema S dropped (not undone)", Leak("schema S dropped", Fate.NOT_UNDONE)),
+        (
+            "database D left behind (undoing it failed: 1003 (42000))",
+            Leak("database D left behind", Fate.UNDO_FAILED, "1003 (42000)"),
+        ),
+    ],
+    ids=["undone", "not-undone", "undoing-it-failed"],
+)
+def test_a_leak_pinned_as_text_keeps_its_fingerprint_with_its_fate(recorded: str, leak: Leak):
+    case = select("a")
+    as_text = comparison_fingerprint(case, RESULT, Outcome(steps=RESULT.steps, leaks=(Leak(recorded),)))
+    assert comparison_fingerprint(case, RESULT, Outcome(steps=RESULT.steps, leaks=(leak,))) == as_text
+
+
+def test_an_old_reports_leak_is_its_text_with_no_fate():
+    old = encode(Outcome(leaks=()))
+    old["$outcome"]["leaks"] = ["schema S dropped (not undone)"]
+    assert decode(old).leaks == (Leak("schema S dropped (not undone)"),)
+
+
+def leak_report(tmp_path: Path, *, cleanup: bool = True) -> Report:
     cases = load_cases([case_dir(tmp_path, "leak", LEAKS)])[:1]
     names = Names.new("PROBES")
-    report = compare_runs(cases, run_target(FAKESNOW, cases, names), [run_target(FAKESNOW_SERVER, cases, names)], names)
+    runs = [run_target(target, cases, names, cleanup=cleanup) for target in (FAKESNOW, FAKESNOW_SERVER)]
+    return compare_runs(cases, runs[0], runs[1:], names)
+
+
+def test_reports_list_leaks(tmp_path: Path):
+    report = leak_report(tmp_path)
     assert "1 leaked" in summary(report)
-    assert f"{FAKESNOW_SERVER:<16} leak.schema: 'schema {{database}}.{{schema}}_L left behind'" in summary(report)
+    assert f"{FAKESNOW_SERVER:<16} leak.schema: 'schema {{database}}.{{schema}}_L left behind (undone)'" in summary(
+        report
+    )
     assert "## Leaks" in markdown(report)
     assert report.verdicts["leak.schema"][FAKESNOW_SERVER].status is Status.MATCH
+
+
+@pytest.mark.parametrize("cleanup", [True, False], ids=["undone", "kept"])
+@pytest.mark.parametrize("render", [summary, markdown])
+def test_reports_say_later_cases_werent_affected_only_when_every_leak_was_undone(
+    tmp_path: Path, render: Callable[[Report], str], cleanup: bool
+):
+    assert ("so later cases weren't affected" in render(leak_report(tmp_path, cleanup=cleanup))) == cleanup
+
+
+@pytest.mark.parametrize("render", [summary, markdown])
+def test_reports_say_kept_leaks_were_there_for_later_cases(tmp_path: Path, render: Callable[[Report], str]):
+    text = render(leak_report(tmp_path, cleanup=False))
+    assert "Those kept were left in place (--keep-leaks), so the cases after them ran with them." in text
+
+
+def test_the_summary_marks_each_kept_leak(tmp_path: Path):
+    text = summary(leak_report(tmp_path, cleanup=False))
+    assert f"{FAKESNOW_SERVER:<16} leak.schema: 'schema {{database}}.{{schema}}_L left behind (kept)'" in text
+
+
+def test_markdown_marks_each_kept_leak(tmp_path: Path):
+    text = markdown(leak_report(tmp_path, cleanup=False))
+    assert f"| `leak.schema` | {FAKESNOW_SERVER} | schema {{database}}.{{schema}}_L left behind (kept) |" in text
+
+
+def test_the_json_report_keeps_each_leaks_fate(tmp_path: Path):
+    write_json(leak_report(tmp_path, cleanup=False), tmp_path / "report.json")
+    leaks = load_run(tmp_path / "report.json", FAKESNOW).outcomes["leak.schema"].leaks
+    assert leaks == (Leak("schema {database}.{schema}_L left behind", Fate.KEPT),)
+
+
+def old_report(tmp_path: Path) -> Report:
+    """The reference's leak recorded before fates were, as its text; the candidate's undone."""
+    report = leak_report(tmp_path)
+    outcome = report.reference.outcomes["leak.schema"]
+    report.reference.outcomes["leak.schema"] = replace(
+        outcome, leaks=(Leak("schema {database}.{schema}_L left behind"),)
+    )
+    return report
+
+
+def test_an_old_reports_leak_is_shown_as_recorded(tmp_path: Path):
+    expected = f"{FAKESNOW:<16} leak.schema: 'schema {{database}}.{{schema}}_L left behind'"
+    assert expected in summary(old_report(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("note", "said"),
+    [
+        ("so later cases weren't affected", False),
+        ("Those unmarked are a recorded run's, which didn't record what was done about them.", True),
+    ],
+    ids=["no-claim", "unmarked"],
+)
+@pytest.mark.parametrize("render", [summary, markdown])
+def test_reports_claim_nothing_about_an_old_reports_leaks(
+    tmp_path: Path, render: Callable[[Report], str], note: str, said: bool
+):
+    assert (note in render(old_report(tmp_path))) == said
 
 
 def test_reports_say_what_the_leak_check_covered_and_that_fakesnow_variables_arent(tmp_path: Path):
