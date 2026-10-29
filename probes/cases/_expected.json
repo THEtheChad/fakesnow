@@ -32,6 +32,10 @@
     "fakesnow": "538b84d05c50c958fd5222ef62bbc60f8e7c13a5e6eac506a2c3d0c779df6acc",
     "fakesnow-server": "538b84d05c50c958fd5222ef62bbc60f8e7c13a5e6eac506a2c3d0c779df6acc"
   },
+  "ddl.drop-schema-drops-temporary-table": {
+    "fakesnow": "8c489e3bd5356e1d68cdf504250f10b6cf1fd9defb6d13772735868e4d7145c2",
+    "fakesnow-server": "8c489e3bd5356e1d68cdf504250f10b6cf1fd9defb6d13772735868e4d7145c2"
+  },
   "ddl.file-format-apostrophe": {
     "fakesnow": "470a682efdcdb32b5c2fb89d931e0ec0aeccf325cb55b565508d96ce5e0007e3",
     "fakesnow-server": "52e1cc7ab8e9f37d4b901277fed851abe6e1b06699937089e416daec19bbf228"
@@ -49,20 +53,20 @@
     "fakesnow-server": "906cc0a8419ba149c3385a8286af8f312ff43c8193729364bee970f941e5f1e1"
   },
   "ddl.show-columns": {
-    "fakesnow": "92f26496736a2212387cfa273ed7920c8013caebd9ad99ea03e9132af193442b",
-    "fakesnow-server": "92f26496736a2212387cfa273ed7920c8013caebd9ad99ea03e9132af193442b"
+    "fakesnow": "65ca05c78ae8e6bb7077eb7e48c519ebcc43c360b4fe52b6f7398b5a6b84faa8",
+    "fakesnow-server": "65ca05c78ae8e6bb7077eb7e48c519ebcc43c360b4fe52b6f7398b5a6b84faa8"
   },
   "ddl.show-schemas": {
-    "fakesnow": "4f1f5721ba9dab7600dc26230cd5e2fff3fe75ea6ffeda98a61f37381c4c312c",
-    "fakesnow-server": "4f1f5721ba9dab7600dc26230cd5e2fff3fe75ea6ffeda98a61f37381c4c312c"
+    "fakesnow": "7e22f192a914900eb0e96634db0fa9da61f611069823fa8a9dd691653d0c1574",
+    "fakesnow-server": "7e22f192a914900eb0e96634db0fa9da61f611069823fa8a9dd691653d0c1574"
   },
   "ddl.show-tables": {
-    "fakesnow": "6d12adcdc0dc0451d915a5eb88164386360a3dbe95d81b6b9a8b99af8d280135",
-    "fakesnow-server": "6d12adcdc0dc0451d915a5eb88164386360a3dbe95d81b6b9a8b99af8d280135"
+    "fakesnow": "11f8750020a0f5605db054128774b865b8258389f1f128515c12ade04e8bb885",
+    "fakesnow-server": "11f8750020a0f5605db054128774b865b8258389f1f128515c12ade04e8bb885"
   },
   "ddl.show-tables-columns": {
-    "fakesnow": "afdce21ae0acbce85362b91f2aab89c0b2d49273587c5068c456f0fcd79a01fa",
-    "fakesnow-server": "afdce21ae0acbce85362b91f2aab89c0b2d49273587c5068c456f0fcd79a01fa"
+    "fakesnow": "d5ffc5586787e724250fb493ddba88e1180207dfbf5ce3dc696f544b6351d057",
+    "fakesnow-server": "d5ffc5586787e724250fb493ddba88e1180207dfbf5ce3dc696f544b6351d057"
   },
   "ddl.temporary-table-after-use-schema": {
     "fakesnow": "6f879cd8a7c744200b32709da4d8096e9e8382a4a0fe6e127847f546900110df",
