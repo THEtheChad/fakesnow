@@ -11,7 +11,7 @@ from snowflake.connector.cursor import SnowflakeCursor
 
 from probes.compare import Verdict, classify
 from probes.context import ProbeContext
-from probes.isolation import LeakCheck
+from probes.isolation import LeakCheck, reach
 from probes.model import Case
 from probes.outcome import ErrorInfo, Outcome, Scrub, Step, redact, run_statement, scrub_error, scrub_value, scrubber
 from probes.targets import SNOWFLAKE, Names, Session, SnowflakeConfig, open_target
@@ -27,6 +27,8 @@ class TargetRun:
     fingerprints: dict[str, str] = field(default_factory=dict[str, str])
     recorded: bool = False
     """Loaded from an earlier run's report rather than run now."""
+    leak_check: str | None = None
+    """What the leak check covered (LeakCheck.scope); None when not recorded."""
 
 
 @dataclass
@@ -54,11 +56,12 @@ class Report:
 Progress = Callable[[str, Case], None]
 
 
-def run_case(case: Case, session: Session, number: int = 1, leak_check: LeakCheck | None = None) -> Outcome:
-    """Run the run's number-th case in a schema of its own, then reset the session and check for leaks."""
-    names = session.enter_case(number)
+def run_case(case: Case, session: Session, leak_check: LeakCheck | None = None) -> Outcome:
+    """Run a case in a schema of its own, then reset the session and check for leaks."""
+    names = session.enter_case(case.id)
     scrub = scrubber(names.placeholders)
     cur = session.conn.cursor()
+    outcome: Outcome | None = None
     try:
         try:
             outcome = _run(case, session, cur, scrub)
@@ -67,11 +70,14 @@ def run_case(case: Case, session: Session, number: int = 1, leak_check: LeakChec
     finally:
         # Teardown also runs on KeyboardInterrupt. Reset before teardown so an aborted transaction
         # cannot prevent dropping resources. A reset failure makes the run unusable, not a match.
-        session.conn.rollback()
-        session.conn.autocommit(True)
+        # Only a case that could have left a transaction open or autocommit off needs it (two round trips).
+        if outcome is None or outcome.crash or reach(case).session:
+            session.conn.rollback()
+            session.conn.autocommit(True)
         teardown = [run_statement(cur, session.names.render(t), t, scrub) for t in case.teardown]
         cur.close()
         dropped = session.leave_case()
+    assert outcome  # else the case's exception is on its way up
     notes = [f"teardown failed: {step.sql}: {step.error}" for step in teardown if step.error]
     notes += [scrub(dropped)] if dropped else []
     outcome = replace(outcome, notes=tuple(notes)) if notes else outcome
@@ -117,12 +123,12 @@ def run_target(
 ) -> TargetRun:
     """Run the cases in the order given. cleanup=False leaves the leaks the leak check finds in place."""
     with open_target(target, names, snowflake_config) as session:
-        run = TargetRun(target, session.info)
         leak_check = LeakCheck(session, cleanup=cleanup)
-        for number, case in enumerate(cases, start=1):
+        run = TargetRun(target, session.info, leak_check=leak_check.scope)
+        for case in cases:
             if progress:
                 progress(target, case)
-            run.outcomes[case.id] = run_case(case, session, number, leak_check)
+            run.outcomes[case.id] = run_case(case, session, leak_check)
             run.fingerprints[case.id] = case.fingerprint()
         return run
 

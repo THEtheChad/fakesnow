@@ -61,7 +61,8 @@ def test_case_interrupt_still_runs_teardown_and_drops_the_case_schema():
         cur = session.conn.cursor()
         cur.execute(f"select count(*) from {cleaned}")
         assert cur.fetchall() == [(0,)]
-        cur.execute(f"select count(*) from information_schema.schemata where schema_name = '{session.names.run}_C1'")
+        case_schema = session.run_names.case("interrupt").schema
+        cur.execute(f"select count(*) from information_schema.schemata where schema_name = '{case_schema}'")
         assert cur.fetchall() == [(0,)]
 
 

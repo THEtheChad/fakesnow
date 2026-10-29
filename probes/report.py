@@ -105,7 +105,7 @@ def summary(report: Report) -> str:
     if leaked:
         lines += ["", "Leaks (shared state a case left changed; the runner undid it unless noted):"]
         lines += [f"  {target:<16} {case.id}: {show('; '.join(found), 160)}" for case, target, found in leaked]
-    lines += ["", comparison_scope(report)]
+    lines += ["", comparison_scope(report), leak_scope(report)]
     return "\n".join(lines)
 
 
@@ -121,6 +121,26 @@ def comparison_scope(report: Report) -> str:
     )
 
 
+def leak_scope(report: Report) -> str:
+    """What the leak check covered on each target, and where it didn't run (a recorded run from before it)."""
+    parts: list[str] = []
+    any_unchecked = False
+    for run in [report.reference, *report.candidates]:
+        outcomes = [o for c in report.cases if (o := run.outcomes.get(c.id))]
+        unchecked = sum(o.leaks is None for o in outcomes)
+        any_unchecked |= unchecked > 0
+        scope = run.leak_check or "scope not recorded"
+        if unchecked == len(outcomes):
+            scope = "not checked (recorded before the leak check)"
+        elif unchecked:
+            scope += f"; not checked for {unchecked} cases (recorded before the leak check)"
+        parts.append(f"{run.target}{' (recorded)' if run.recorded else ''}: {scope}")
+    text = "Leak check: " + "; ".join(parts) + "."
+    if any_unchecked:
+        text += " A leak against an unchecked reference is an error until the reference is rerun."
+    return text
+
+
 # --- Markdown
 
 
@@ -134,6 +154,8 @@ def markdown(report: Report) -> str:
         f"compared with {', '.join(describe_target(r) for r in report.candidates)}.",
         "",
         comparison_scope(report),
+        "",
+        leak_scope(report),
         "",
         "| target | match | unexpected | expected | now matches | error |",
         "|---|---|---|---|---|---|",
@@ -277,6 +299,7 @@ def to_json(report: Report) -> dict[str, Any]:
             run.target: {
                 "info": run.info,
                 "recorded": run.recorded,
+                "leak check": run.leak_check,
                 "outcomes": {
                     case_id: {"fingerprint": run.fingerprints.get(case_id), "outcome": encode(outcome)}
                     for case_id, outcome in run.outcomes.items()
@@ -327,6 +350,7 @@ def load_run(path: Path, target: str = SNOWFLAKE) -> TargetRun:
         outcomes={k: decode(v["outcome"]) for k, v in run["outcomes"].items()},
         fingerprints={k: v["fingerprint"] for k, v in run["outcomes"].items()},
         recorded=True,
+        leak_check=run.get("leak check"),
     )
 
 
