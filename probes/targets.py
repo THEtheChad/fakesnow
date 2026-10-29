@@ -259,11 +259,12 @@ def _snowflake(names: Names, config: SnowflakeConfig) -> Iterator[Session]:
                     cleanup.close()
 
 
-def _drop_run_objects(conn: SnowflakeConnection, names: Names) -> None:
-    """Drop the run's schema, and any schema or database a case created named after it."""
+def _drop_run_objects(conn: SnowflakeConnection, names: Names, *, databases: bool = True) -> None:
+    """Drop the run's schema, and any schema (or database) a case created named after it."""
     cur = conn.cursor()
     statements = [f"drop schema if exists {names.database}.{names.schema} cascade"]
-    for kind, scope in (("schemas", f" in database {names.database}"), ("databases", "")):
+    kinds = [("schemas", f" in database {names.database}"), *([("databases", "")] if databases else [])]
+    for kind, scope in kinds:
         try:
             cur.execute(f"show {kind} like '{names.schema}%'{scope}")
             found = [r[1] for r in cur.fetchall()]
@@ -322,6 +323,13 @@ def _fakesnow_server(names: Names) -> Iterator[Session]:
             yield Session(FAKESNOW_SERVER, names, conn, connect, fakesnow_info())
         finally:
             conn.close()
+            # Every server in a process shares one fakesnow instance: leave nothing for the next run's cases to see.
+            # fakesnow can't drop a database, so one a case left behind stays.
+            cleanup = connect()
+            try:
+                _drop_run_objects(cleanup, names, databases=False)
+            finally:
+                cleanup.close()
 
 
 @contextmanager

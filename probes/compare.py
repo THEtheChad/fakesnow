@@ -116,9 +116,16 @@ def diff_leaks(reference: Outcome, candidate: Outcome) -> list[str]:
 
 
 def diff_results_of(compare: Compare, reference: Outcome, candidate: Outcome) -> list[str]:
-    if candidate.setup_error:
-        step = candidate.setup_error
-        return [f"setup failed: {step.sql}: {step.error}"]
+    if reference.setup_error and candidate.setup_error:
+        r, c = reference.setup_error, candidate.setup_error
+        assert r.error and c.error
+        return ([f"setup: failed at {r.sql} vs {c.sql}"] if r.sql != c.sql else []) + diff_errors(
+            "setup", compare, r.error, c.error
+        )
+    if reference.setup_error or candidate.setup_error:
+        step = candidate.setup_error or reference.setup_error
+        assert step
+        return [f"setup failed: {step.sql}: {step.error}" + ("" if candidate.setup_error else " vs succeeded")]
     out: list[str] = []
     if reference.error or candidate.error:
         out += diff_errors("raised", compare, reference.error, candidate.error)
@@ -157,6 +164,13 @@ def diff_errors(where: str, compare: Compare, reference: ErrorInfo | None, candi
 def error_key(error: ErrorInfo) -> tuple[Any, ...]:
     # Exception classes affect callers' except clauses, even when numeric codes happen to match.
     return (error.errno, error.sqlstate, error.kind, error.database_error)
+
+
+def outcome_changes(case: Case, before: Outcome, after: Outcome) -> list[str]:
+    """How a case's outcome on one target changed between two runs of it, by the case's own comparison."""
+    if before.crash or after.crash:
+        return [] if before.crash == after.crash else [f"harness: {before.crash} vs {after.crash}"]
+    return diff(case.compare, before, after)
 
 
 def comparison_fingerprint(case: Case, reference: Outcome, candidate: Outcome) -> str:
