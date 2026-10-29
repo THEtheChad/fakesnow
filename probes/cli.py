@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import shlex
 import sys
 import time
 from collections.abc import Sequence
@@ -224,8 +225,9 @@ def find_polluter(args: argparse.Namespace, order: list[Case]) -> int:
     print("\n".join(f"  {case.id}" for case in search.polluters))
     print("after just those:")
     print("\n".join(f"  {show(line, 300)}" for line in search.after_polluters))
-    repro = ["python -m probes", *map(str, args.paths), "--find-polluter", victim.id]
+    repro = ["python", "-m", "probes", *map(str, args.paths), "--find-polluter", victim.id]
     repro += ["--order", ",".join(c.id for c in [*search.polluters, victim]), "--target", target]
+    repro += ["--strict-metadata"] if args.strict_metadata else []
     repro += ["--keep-leaks"] if args.keep_leaks else []
-    print(f"reproduce: {' '.join(repro)}")
+    print(f"reproduce: {shlex.join(repro)}")
     return 0

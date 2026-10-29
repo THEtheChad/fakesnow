@@ -1,6 +1,7 @@
 """Isolation: each case's own schema, the leak check, shuffled order, and finding polluters. No Snowflake."""
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -9,14 +10,14 @@ import pytest
 
 from probes.cli import main, run
 from probes.compare import Status, classify, comparison_fingerprint
-from probes.isolation import LeakCheck, State, checks_parameters
+from probes.isolation import EVERYTHING, LeakCheck, Reach, State, reach
 from probes.loader import load_cases
 from probes.model import Case, Expected
 from probes.outcome import Column, Outcome, ResultSet, Step, decode, encode, scrubber
 from probes.polluter import ddmin, find_polluters
-from probes.report import markdown, summary, to_json
+from probes.report import leak_scope, load_run, markdown, summary, to_json, write_json
 from probes.runner import compare_runs, run_case, run_target, shuffled
-from probes.targets import FAKESNOW, FAKESNOW_SERVER, SNOWFLAKE, Names, TargetError, open_target
+from probes.targets import FAKESNOW, FAKESNOW_SERVER, SNOWFLAKE, Names, Session, TargetError, open_target
 
 CASES = """
 from probes import Case
@@ -77,18 +78,33 @@ def case_dir(tmp_path: Path, name: str, source: str) -> Path:
     return path
 
 
+def select(case_id: str, sql: str = "select 1") -> Case:
+    return Case(id=case_id, description="d", sql=sql)
+
+
 # --- each case's own schema
 
 
-def test_case_names_are_the_runs_with_a_suffix_and_scrub_to_schema():
+def test_a_case_schema_is_the_runs_name_with_a_suffix_from_the_case_id():
     run = Names("db", "probes_x")
-    case = run.case(3)
-    assert (case.database, case.schema, case.run, run.run) == ("DB", "PROBES_X_C3", "PROBES_X", "PROBES_X")
-    assert case.render("{database}.{schema}_S2") == "DB.PROBES_X_C3_S2"
+    case = run.case("a.case")
+    assert (case.database, case.run, run.run) == ("DB", "PROBES_X", "PROBES_X")
+    assert re.fullmatch(r"PROBES_X_C[0-9A-F]{8}", case.schema)
+    # the same in every run, order and selection, and as long as any other case's
+    assert Names("db", "probes_x").case("a.case") == case
+    assert case.schema != run.case("another.case").schema
+    assert len({len(run.case(f"case.{i}").schema) for i in range(20)}) == 1
+
+
+def test_a_case_schema_renders_and_scrubs_to_schema():
+    case = Names("db", "probes_x").case("a.case")
+    schema = case.schema
+    assert case.render("{database}.{schema}_S2") == f"DB.{schema}_S2"
     scrub = scrubber(case.placeholders)
-    assert scrub("PROBES_X_C3 PROBES_X_C3_S2 probes_x_c3 DB") == "{schema} {schema}_S2 {schema:lower} {database}"
+    assert scrub(f"{schema} {schema}_S2 {schema.lower()} DB") == "{schema} {schema}_S2 {schema:lower} {database}"
     # another case's schema, or the run's own, is never this case's {schema}
-    assert scrub("PROBES_X_C33 PROBES_X") == "{run_schema}_C33 {run_schema}"
+    other = Names("db", "probes_x").case("b.case").schema
+    assert scrub(f"{other} PROBES_X") == f"{{run_schema}}{other.removeprefix('PROBES_X')} {{run_schema}}"
 
 
 def test_names_recognise_other_runs():
@@ -115,25 +131,33 @@ def test_each_case_runs_in_its_own_schema(tmp_path: Path, target: str):
 
 
 def test_server_runs_in_one_process_dont_see_each_others_schemas():
-    # every fakesnow server in a process shares one instance
-    case = Case(id="count", description="d", sql="select count(*) from information_schema.schemata")
-    first = run_target(FAKESNOW_SERVER, [case], Names.new("PROBES")).outcomes["count"]
-    assert run_target(FAKESNOW_SERVER, [case], Names.new("PROBES")).outcomes["count"] == first
+    count = select("count", "select count(*) from information_schema.schemata")
+    first = run_target(FAKESNOW_SERVER, [count], Names.new("PROBES")).outcomes["count"]
+    assert run_target(FAKESNOW_SERVER, [count], Names.new("PROBES")).outcomes["count"] == first
 
 
-# --- the leak check
+def test_server_runs_in_one_process_dont_see_each_others_databases():
+    # fakesnow can't drop a database: one a run leaves behind mustn't reach the next run
+    count = select("count", "select count(*) from information_schema.databases")
+    first = run_target(FAKESNOW_SERVER, [count], Names.new("PROBES")).outcomes["count"]
+    run_target(FAKESNOW_SERVER, [select("creator", "create database {schema}_DB")], Names.new("PROBES"))
+    assert run_target(FAKESNOW_SERVER, [count], Names.new("PROBES")).outcomes["count"] == first
+
+
+# --- the leak check on fakesnow
 
 
 def test_leaks_are_reported_against_the_case_and_undone(tmp_path: Path):
     cases = load_cases([case_dir(tmp_path, "leak", LEAKS)])
     with open_target(FAKESNOW, Names.new("PROBES")) as session:
         check = LeakCheck(session)
-        outcomes = [run_case(case, session, n, check) for n, case in enumerate(cases, start=1)]
+        outcomes = [run_case(case, session, check) for case in cases]
         cur = session.conn.cursor()
-        cur.execute(f"select count(*) from information_schema.schemata where schema_name = '{session.names.run}_C1_L'")
+        leaked = session.run_names.case("leak.schema").schema + "_L"
+        cur.execute(f"select count(*) from information_schema.schemata where schema_name = '{leaked}'")
         assert cur.fetchall() == [(0,)]
     assert outcomes[0].leaks == ("schema {database}.{schema}_L left behind",)
-    # fakesnow keeps a temporary table after its schema is dropped: the runner drops it, as Snowflake would
+    # a temporary table in the case's schema goes with it, as on Snowflake (fakesnow keeps it: the runner drops it)
     assert outcomes[1].leaks == ()
     assert outcomes[2].leaks == ()
     assert outcomes[2].steps[0].error is None
@@ -143,34 +167,282 @@ def test_keep_leaks_reports_each_once_and_leaves_it(tmp_path: Path):
     cases = load_cases([case_dir(tmp_path, "leak", LEAKS)])
     with open_target(FAKESNOW, Names.new("PROBES")) as session:
         check = LeakCheck(session, cleanup=False)
-        first = run_case(cases[0], session, 1, check)
-        second = run_case(Case(id="quiet", description="does nothing", sql="select 1"), session, 2, check)
+        first = run_case(cases[0], session, check)
+        second = run_case(select("quiet"), session, check)
         cur = session.conn.cursor()
-        cur.execute(f"select count(*) from information_schema.schemata where schema_name = '{session.names.run}_C1_L'")
+        leaked = session.run_names.case("leak.schema").schema + "_L"
+        cur.execute(f"select count(*) from information_schema.schemata where schema_name = '{leaked}'")
         assert cur.fetchall() == [(1,)]
     assert first.leaks and not second.leaks
 
 
-def fake_snowflake_check(names: Names) -> LeakCheck:
-    check = LeakCheck.__new__(LeakCheck)
-    check.session = SimpleNamespace(run_names=names, is_snowflake=True)  # pyright: ignore[reportAttributeAccessIssue]
-    return check
+def temporary_in_run_schema(names: Names) -> Case:
+    return select("home.temporary", f"create temporary table {{database}}.{names.schema}.home_tt (x int)")
+
+
+@pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
+def test_a_temporary_table_outside_the_case_schema_is_a_leak_and_undone(target: str):
+    names = Names.new("PROBES")
+    with open_target(target, names) as session:
+        check = LeakCheck(session)
+        outcome = run_case(temporary_in_run_schema(names), session, check)
+        assert run_case(select("next", "select * from home_tt"), session, check).steps[0].error
+    assert outcome.leaks == ("temporary table {database}.{run_schema}.HOME_TT left behind",)
+
+
+def test_keep_leaks_leaves_a_temporary_table_outside_the_case_schema():
+    names = Names.new("PROBES")
+    with open_target(FAKESNOW, names) as session:
+        check = LeakCheck(session, cleanup=False)
+        outcome = run_case(temporary_in_run_schema(names), session, check)
+        assert run_case(select("next", "select * from home_tt"), session, check).steps[0].error is None
+    assert outcome.leaks == ("temporary table {database}.{run_schema}.HOME_TT left behind",)
+
+
+def test_a_temporary_table_whose_schema_was_dropped_is_dropped_too_as_on_snowflake():
+    dropped = Case(
+        id="dropped",
+        description="d",
+        setup=["create schema {database}.{schema}_T", "create temporary table {database}.{schema}_T.gone_tt (x int)"],
+        sql="drop schema {database}.{schema}_T cascade",
+    )
+    with open_target(FAKESNOW, Names.new("PROBES")) as session:
+        # not a leak, so even when leaks are kept
+        check = LeakCheck(session, cleanup=False)
+        outcome = run_case(dropped, session, check)
+        assert (
+            run_case(select("again", "create temporary table gone_tt (x int)"), session, check).steps[0].error is None
+        )
+    assert outcome.leaks == ()
+
+
+# --- what a case could change
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "ALTER /* c */ SESSION SET TIMEZONE = 'America/New_York'",
+        "-- c\nalter session set timezone = 'UTC'",
+        "alter // c\n session set timezone = 'UTC'",
+        "alter table t add column y int",  # ALTER is never on the list: ALTER SESSION, USER, ACCOUNT
+        "set reviewer_variable = 42",
+        "unset reviewer_variable",
+        "/* c */ begin",
+        "call p()",
+        "execute immediate 'select 1'",
+        "select 1; alter session set timezone = 'UTC'",  # more than one statement
+        "select 'unterminated",
+        "/* unterminated select 1",
+        "'text' select 1",  # anything but a keyword first
+    ],
+)
+def test_anything_not_plainly_a_listed_kind_could_change_everything(sql: str):
+    assert reach(select("a", sql)) == EVERYTHING
+
+
+def test_a_python_probe_could_change_everything():
+    assert reach(Case(id="a", description="d", run=lambda conn, ctx: None)) == EVERYTHING
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "select 'alter session set timezone = ''UTC'''",
+        "-- alter session\nselect 1",
+        "/* set x = 1 */ select 1;",
+        "(select 1) union all (select 2)",
+        "with x as (select 1) select * from x",
+        "insert into t values ('; alter session')",
+        "show tables",
+        "describe table t",
+        "use schema {database}.{schema}",
+        "create table t (x int)",
+        "create table schema_t as select * from information_schema.tables",  # names, not the SCHEMA keyword
+        "drop table t",
+        "create procedure p() returns int language sql as $$ begin alter session set timezone = 'UTC'; end $$",
+    ],
+)
+def test_listed_kinds_change_nothing_the_check_lists(sql: str):
+    assert reach(select("a", sql)) == Reach(session=False, objects=False)
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "create schema {database}.{schema}_S2",
+        "drop database if exists {schema}_DB",
+        "create or replace temporary table t (x int)",
+        "create temp table t (x int)",
+        "undrop schema x",
+    ],
+)
+def test_ddl_on_schemas_databases_or_temporary_tables_changes_objects_only(sql: str):
+    assert reach(select("a", sql)) == Reach(session=False, objects=True)
+
+
+def test_every_statement_counts_setup_and_teardown_too():
+    case = Case(id="a", description="d", setup=["create table t (x int)"], sql="select 1", teardown=["set x = 1"])
+    assert reach(case) == EVERYTHING
+
+
+# --- the leak check on Snowflake, against a stand-in
+
+
+class StubSnowflake:
+    """Just enough of a Snowflake session for the leak check: schemas, parameters and variables. Records what ran."""
+
+    def __init__(self) -> None:
+        self.database, self.schema, self.role, self.warehouse = "DB", "PROBES_X", "PROBER", "WH"
+        self.schemas = {"INFORMATION_SCHEMA", "PUBLIC", "PROBES_X"}
+        self.parameters = {"TIMEZONE": ("UTC", "STRING")}
+        self.variables: dict[str, tuple[str, str]] = {}
+        self.statements: list[str] = []
+
+    def cursor(self) -> "StubCursor":
+        return StubCursor(self)
+
+    def rollback(self) -> None:
+        self.statements.append("rollback")
+
+    def autocommit(self, mode: bool) -> None:
+        self.statements.append(f"autocommit {mode}")
+
+
+class StubCursor:
+    def __init__(self, conn: StubSnowflake) -> None:
+        self.conn = conn
+        self.description: list[Any] = []
+        self.rows: list[tuple[Any, ...]] = []
+
+    def execute(self, sql: str) -> "StubCursor":
+        conn = self.conn
+        conn.statements.append(sql)
+        text = re.sub(r"/\*.*?\*/", " ", sql).strip()
+        self.result(["status"], [("ok",)])
+        if m := re.fullmatch(r"create schema \w+\.(\w+)", text):
+            conn.schemas.add(m[1])
+            conn.schema = m[1]
+        elif m := re.fullmatch(r"drop schema if exists \w+\.(\w+) cascade", text):
+            conn.schemas.discard(m[1])
+        elif text.startswith("show terse"):
+            listed = conn.schemas if "schemas" in text else []
+            rows = [(None, name, None, conn.database, None) for name in sorted(listed)]
+            self.result(["created_on", "name", "kind", "database_name", "schema_name"], rows)
+        elif text == "show parameters in session":
+            rows = [(k, v, "", "", "", t) for k, (v, t) in conn.parameters.items()]
+            self.result(["key", "value", "default", "level", "description", "type"], rows)
+        elif text == "show variables":
+            rows = [(1, None, None, k, v, t, None) for k, (v, t) in conn.variables.items()]
+            self.result(["session_id", "created_on", "updated_on", "name", "value", "type", "comment"], rows)
+        elif m := re.fullmatch(r"alter\s+session\s+set\s+(\w+)\s*=\s*'([^']*)'", text, re.IGNORECASE):
+            conn.parameters[m[1].upper()] = (m[2], "STRING")
+        elif m := re.fullmatch(r"set\s+(\w+)\s*=\s*(\d+)", text, re.IGNORECASE):
+            conn.variables[m[1].upper()] = (m[2], "fixed")
+        elif m := re.fullmatch(r"unset\s+(\w+)", text, re.IGNORECASE):
+            conn.variables.pop(m[1].upper(), None)
+        return self
+
+    def result(self, columns: list[str], rows: list[tuple[Any, ...]]) -> None:
+        self.description = [
+            SimpleNamespace(name=c, type_code=2, precision=None, scale=None, internal_size=None) for c in columns
+        ]
+        self.rows = rows
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return self.rows
+
+    def close(self) -> None:
+        pass
+
+
+def stub_session() -> tuple[Session, StubSnowflake]:
+    conn = StubSnowflake()
+    fake: Any = conn
+    return Session(SNOWFLAKE, Names("DB", "PROBES_X"), fake, lambda schema: fake, {}), conn
+
+
+def test_a_parameter_change_is_blamed_on_the_case_that_made_it_and_undone():
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    changed = select("changes", "ALTER /* c */ SESSION SET TIMEZONE = 'America/New_York'")
+    outcomes = [run_case(case, session, check) for case in [changed, select("next"), select("after")]]
+    assert outcomes[0].leaks == ("session parameter TIMEZONE changed from 'UTC' to 'America/New_York'",)
+    assert outcomes[1].leaks == outcomes[2].leaks == ()
+    assert conn.parameters["TIMEZONE"] == ("UTC", "STRING")
+
+
+def test_a_session_variable_is_reported_and_unset():
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    outcomes = [run_case(case, session, check) for case in [select("sets", "SET reviewer_variable=42"), select("next")]]
+    assert outcomes[0].leaks == ("session variable REVIEWER_VARIABLE set to '42'",)
+    assert outcomes[1].leaks == ()
+    assert conn.variables == {}
+    assert "unset REVIEWER_VARIABLE" in conn.statements
+
+
+def round_trips(case: Case) -> list[str]:
+    """What the runner sends Snowflake for a case, beyond the case's own statements."""
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    conn.statements.clear()
+    run_case(case, session, check)
+    own = {session.run_names.case(case.id).render(s) for s in (*case.setup, *case.statements, *case.teardown)}
+    return [re.sub(r"PROBES_X\w*", "X", s).split(" in ")[0] for s in conn.statements if s not in own]
+
+
+def test_a_case_that_cant_change_shared_state_costs_its_schema_only():
+    assert round_trips(select("a", "select 1")) == ["create schema DB.X", "drop schema if exists DB.X cascade"]
+
+
+def test_ddl_on_schemas_adds_a_snapshot_of_objects_only():
+    assert round_trips(select("a", "drop schema if exists {database}.{schema}_S")) == [
+        "create schema DB.X",
+        "drop schema if exists DB.X cascade",
+        "show terse schemas",
+        "show terse databases like 'X%'",
+        "show terse tables",
+    ]
+
+
+def test_a_case_that_could_change_the_session_resets_it_and_lists_everything():
+    assert round_trips(select("a", "set x = 1")) == [
+        "create schema DB.X",
+        "rollback",
+        "autocommit True",
+        "drop schema if exists DB.X cascade",
+        "show terse schemas",
+        "show terse databases like 'X%'",
+        "show terse tables",
+        "show parameters",
+        "show variables",
+        "unset X",
+        "show terse schemas",
+        "show terse databases like 'X%'",
+        "show terse tables",
+        "show parameters",
+        "show variables",
+    ]
 
 
 def test_snowflake_leaks_and_how_they_are_undone():
-    names = Names("DB", "PROBES_X")
-    check = fake_snowflake_check(names)
+    session, _ = stub_session()
+    check = LeakCheck.__new__(LeakCheck)
+    check.session = session
     before = State(
-        frozenset({"PUBLIC", "PROBES_X"}),
-        frozenset(),
-        {"role": "PROBER", "warehouse": "WH"},
-        {"TIMEZONE": ("UTC", "STRING"), "STATEMENT_TIMEOUT_IN_SECONDS": ("60", "NUMBER")},
+        schemas=frozenset({"PUBLIC", "PROBES_X"}),
+        context={"role": "PROBER", "warehouse": "WH"},
+        parameters={"TIMEZONE": ("UTC", "STRING"), "STATEMENT_TIMEOUT_IN_SECONDS": ("60", "NUMBER")},
+        variables={"KEPT": ("1", "fixed"), "GONE": ("a'b", "text")},
     )
     after = State(
-        frozenset({"PROBES_X", "PROBES_X_C1_S2", "SOMEONE_ELSES"}),
-        frozenset({"PROBES_X_C1_DB"}),
-        {"role": "OTHER", "warehouse": "WH"},
-        {"TIMEZONE": ("America/New_York", "STRING"), "STATEMENT_TIMEOUT_IN_SECONDS": ("5", "NUMBER")},
+        schemas=frozenset({"PROBES_X", "PROBES_X_C1_S2", "SOMEONE_ELSES"}),
+        databases=frozenset({"PROBES_X_C1_DB"}),
+        temporary_tables=frozenset({("DB", "PROBES_X", "MINE"), ("DB", "PUBLIC", "THEIRS")}),
+        context={"role": "OTHER", "warehouse": "WH"},
+        parameters={"TIMEZONE": ("America/New_York", "STRING"), "STATEMENT_TIMEOUT_IN_SECONDS": ("5", "NUMBER")},
+        variables={"KEPT": ("2", "fixed"), "new_one": ("x", "text")},
     )
     leaks = {leak.description: leak.undo for leak in check.changes(before, after)}
     assert leaks == {
@@ -179,23 +451,21 @@ def test_snowflake_leaks_and_how_they_are_undone():
         "schema DB.SOMEONE_ELSES left behind, not named after the run": None,
         "schema DB.PUBLIC dropped": None,
         "database PROBES_X_C1_DB left behind": 'drop database if exists "PROBES_X_C1_DB" cascade',
+        "temporary table DB.PROBES_X.MINE left behind": 'drop table if exists "DB"."PROBES_X"."MINE"',
+        # DROP TABLE drops a permanent table of the same name if the temporary one is gone
+        "temporary table DB.PUBLIC.THEIRS left behind": None,
         "session role changed from PROBER to OTHER": 'use role "PROBER"',
         "session parameter STATEMENT_TIMEOUT_IN_SECONDS changed from '60' to '5'": (
             "alter session set STATEMENT_TIMEOUT_IN_SECONDS = 60"
         ),
         "session parameter TIMEZONE changed from 'UTC' to 'America/New_York'": "alter session set TIMEZONE = 'UTC'",
+        "session variable new_one set to 'x'": 'unset "new_one"',
+        "session variable GONE unset": "set GONE = 'a\\'b'",
+        "session variable KEPT changed from '1' to '2'": "set KEPT = 1",
     }
 
 
-def test_session_parameters_are_listed_only_on_snowflake_after_cases_that_could_change_them():
-    snowflake: Any = SimpleNamespace(is_snowflake=True)
-    fakesnow: Any = SimpleNamespace(is_snowflake=False)
-    plain = Case(id="a", description="d", sql="select 'alter session' as text_is_not_checked_differently")
-    assert checks_parameters(snowflake, Case(id="a", description="d", sql="ALTER  SESSION set timezone = 'UTC'"))
-    assert checks_parameters(snowflake, Case(id="a", description="d", run=lambda conn, ctx: None))
-    assert not checks_parameters(snowflake, Case(id="a", description="d", sql="select 1"))
-    assert checks_parameters(snowflake, plain)  # a false positive costs one statement, never a missed leak
-    assert not checks_parameters(fakesnow, Case(id="a", description="d", run=lambda conn, ctx: None))
+# --- comparing and reporting leaks
 
 
 RESULT = Outcome(steps=(Step("select 1", ResultSet((Column("X", 0),), ((1,),))),))
@@ -203,7 +473,7 @@ LEAKED = ("schema {database}.{schema}_S2 left behind",)
 
 
 def test_a_reference_leak_is_an_error_only_when_the_reference_is_snowflake():
-    case = Case(id="a", description="d", sql="select 1")
+    case = select("a")
     leaked, clean = Outcome(steps=RESULT.steps, leaks=LEAKED), Outcome(steps=RESULT.steps, leaks=())
     verdict = classify(case, leaked, leaked, FAKESNOW, with_expected=True)
     assert verdict.status is Status.ERROR
@@ -213,12 +483,10 @@ def test_a_reference_leak_is_an_error_only_when_the_reference_is_snowflake():
     assert classify(case, leaked, clean, FAKESNOW_SERVER, with_expected=False).status is Status.UNEXPECTED
 
 
-@pytest.mark.parametrize("reference_leaks", [(), None], ids=["checked", "recorded before the leak check"])
-def test_a_candidate_only_leak_is_a_difference(reference_leaks: tuple[str, ...] | None):
-    case = Case(id="a", description="d", sql="select 1")
-    reference = Outcome(steps=RESULT.steps, leaks=reference_leaks)
+def test_a_candidate_only_leak_is_a_difference_that_can_be_pinned():
+    reference = Outcome(steps=RESULT.steps, leaks=())
     candidate = Outcome(steps=RESULT.steps, leaks=LEAKED)
-    verdict = classify(case, reference, candidate, FAKESNOW, with_expected=True)
+    verdict = classify(select("a"), reference, candidate, FAKESNOW, with_expected=True)
     assert verdict.status is Status.UNEXPECTED
     assert verdict.differences == (f"leaked {LEAKED[0]}",)
     assert verdict.fingerprint
@@ -232,8 +500,36 @@ def test_a_candidate_only_leak_is_a_difference(reference_leaks: tuple[str, ...] 
     assert classify(pinned, reference, candidate, FAKESNOW, with_expected=True).status is Status.EXPECTED
 
 
+@pytest.mark.parametrize("with_expected", [True, False], ids=["snowflake", "fakesnow"])
+def test_a_candidate_leak_against_an_unchecked_reference_is_an_error_not_a_difference(with_expected: bool):
+    unchecked = Outcome(steps=RESULT.steps)  # recorded before the leak check
+    candidate = Outcome(steps=RESULT.steps, leaks=LEAKED)
+    fingerprint = comparison_fingerprint(select("a"), unchecked, candidate)
+    # even if someone pinned it
+    pinned = Case(
+        id="a",
+        description="d",
+        sql="select 1",
+        expected=Expected(["#1"], "fakesnow can't drop it"),
+        expected_outcomes={FAKESNOW: fingerprint},
+    )
+    verdict = classify(pinned, unchecked, candidate, FAKESNOW, with_expected=with_expected)
+    assert verdict.status is Status.ERROR
+    assert verdict.differences == (
+        f"reference: leaks not checked (recorded before the leak check), rerun it: {FAKESNOW} leaked {LEAKED[0]}",
+    )
+    assert verdict.fingerprint is None
+
+
+def test_an_unchecked_reference_still_compares_the_rest():
+    unchecked = Outcome(steps=RESULT.steps)
+    assert classify(select("a"), unchecked, Outcome(steps=RESULT.steps, leaks=()), FAKESNOW, with_expected=True) == (
+        classify(select("a"), RESULT, RESULT, FAKESNOW, with_expected=True)
+    )
+
+
 def test_no_leaks_keeps_the_fingerprint_from_before_the_leak_check():
-    case = Case(id="a", description="d", sql="select 1")
+    case = select("a")
     other = Outcome(steps=(Step("select 1", ResultSet((Column("X", 0),), ((2,),))),))
     before_check = comparison_fingerprint(case, RESULT, other)
     assert comparison_fingerprint(case, RESULT, Outcome(steps=other.steps, leaks=())) == before_check
@@ -258,39 +554,98 @@ def test_reports_list_leaks(tmp_path: Path):
     assert report.verdicts["leak.schema"][FAKESNOW_SERVER].status is Status.MATCH
 
 
+def test_reports_say_what_the_leak_check_covered_and_that_fakesnow_variables_arent(tmp_path: Path):
+    cases = [select("a")]
+    names = Names.new("PROBES")
+    report = compare_runs(cases, run_target(FAKESNOW, cases, names), [run_target(FAKESNOW_SERVER, cases, names)], names)
+    scope = "schemas, databases, temporary tables; variables unchecked (fakesnow doesn't list them)"
+    assert leak_scope(report) == f"Leak check: {FAKESNOW}: {scope}; {FAKESNOW_SERVER}: {scope}."
+    assert leak_scope(report) in summary(report)
+    assert leak_scope(report) in markdown(report)
+    write_json(report, tmp_path / "report.json")
+    assert load_run(tmp_path / "report.json", FAKESNOW).leak_check == scope
+
+
+def test_reports_say_a_recorded_reference_wasnt_checked():
+    cases = [select("a")]
+    names = Names.new("PROBES")
+    reference = run_target(FAKESNOW, cases, names)
+    reference.outcomes["a"] = Outcome(steps=reference.outcomes["a"].steps)
+    reference.recorded, reference.leak_check = True, None
+    report = compare_runs(cases, reference, [run_target(FAKESNOW_SERVER, cases, names)], names)
+    assert leak_scope(report).startswith(f"Leak check: {FAKESNOW} (recorded): not checked (recorded before the leak")
+    assert leak_scope(report).endswith(
+        "A leak against an unchecked reference is an error until the reference is rerun."
+    )
+
+
 # --- shuffled order
 
 
-def test_shuffle_is_deterministic_and_the_seed_is_reported(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
-    cases = [Case(id=f"c{i}", description="d", sql="select 1") for i in range(20)]
+def test_shuffle_is_deterministic_for_a_seed_and_differs_between_seeds():
+    cases = [select(f"c{i}") for i in range(20)]
     assert [c.id for c in shuffled(cases, 7)] == [c.id for c in shuffled(cases, 7)]
     assert [c.id for c in shuffled(cases, 7)] != [c.id for c in shuffled(cases, 8)]
     assert [c.id for c in shuffled(cases, 7)] != [c.id for c in cases]
 
+
+def test_a_shuffled_run_uses_the_same_order_on_every_target_and_reports_in_file_order(tmp_path: Path):
     loaded = load_cases([case_dir(tmp_path, "iso", CASES)])
     order = shuffled(loaded, 3)
     report = run(loaded, order, FAKESNOW, [FAKESNOW_SERVER], None, verbose=False, seed=3)
-    # the same order on every target, reported in file order
     assert list(report.reference.outcomes) == list(report.candidates[0].outcomes) == [c.id for c in order]
     assert [c.id for c in report.cases] == [c.id for c in loaded]
+
+
+def test_every_report_has_the_seed_and_the_order(tmp_path: Path):
+    loaded = load_cases([case_dir(tmp_path, "iso", CASES)])
+    order = shuffled(loaded, 3)
+    report = run(loaded, order, FAKESNOW, [FAKESNOW_SERVER], None, verbose=False, seed=3)
     assert "--shuffle 3" in summary(report)
     assert "--shuffle 3" in markdown(report)
     assert to_json(report)["order"] == {"shuffle": 3, "cases": [c.id for c in order]}
 
+
+def test_shuffle_random_picks_a_seed_and_reports_it(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    path = case_dir(tmp_path, "iso", CASES)
     js = tmp_path / "report.json"
-    args = [str(tmp_path / "iso"), "--reference", FAKESNOW, "--target", FAKESNOW_SERVER, "--json", str(js)]
-    assert main([*args, "--shuffle", "random"]) == 0
+    assert (
+        main(
+            [str(path), "--reference", FAKESNOW, "--target", FAKESNOW_SERVER, "--json", str(js), "--shuffle", "random"]
+        )
+        == 0
+    )
     seed = json.loads(js.read_text())["order"]["shuffle"]
     assert f"--shuffle {seed}" in capsys.readouterr().out
-    assert json.loads(js.read_text())["order"]["cases"] == [c.id for c in shuffled(loaded, seed)]
+    assert json.loads(js.read_text())["order"]["cases"] == [c.id for c in shuffled(load_cases([path]), seed)]
 
 
 def test_order_runs_exactly_the_cases_given(tmp_path: Path):
     path = str(case_dir(tmp_path, "iso", CASES))
-    base = [path, "--reference", FAKESNOW, "--target", FAKESNOW_SERVER]
-    assert main([*base, "--order", "iso.read,iso.create"]) == 0
-    assert main([*base, "--order", "iso.nope"]) == 2
-    assert main([*base, "--order", "iso.read", "--shuffle", "1"]) == 2
+    js = tmp_path / "report.json"
+    assert (
+        main(
+            [
+                path,
+                "--reference",
+                FAKESNOW,
+                "--target",
+                FAKESNOW_SERVER,
+                "--order",
+                "iso.read,iso.create",
+                "--json",
+                str(js),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(js.read_text())["order"]["cases"] == ["iso.read", "iso.create"]
+
+
+@pytest.mark.parametrize("extra", [["--order", "iso.nope"], ["--order", "iso.read", "--shuffle", "1"]])
+def test_order_rejects_unknown_cases_and_shuffle(tmp_path: Path, extra: list[str]):
+    path = str(case_dir(tmp_path, "iso", CASES))
+    assert main([path, "--reference", FAKESNOW, "--target", FAKESNOW_SERVER, *extra]) == 2
 
 
 # --- finding polluters
@@ -306,28 +661,63 @@ def test_ddmin_finds_a_smallest_set_in_order():
 def test_find_polluters_finds_a_planted_pair(tmp_path: Path):
     cases = load_cases([case_dir(tmp_path, "p", POLLUTERS)])
     ids = [c.id for c in cases]
-    victim = cases[ids.index("p.victim")]
-    search = find_polluters(victim, cases[: ids.index("p.victim")], FAKESNOW, "PROBES")
+    search = find_polluters(cases[ids.index("p.victim")], cases[: ids.index("p.victim")], FAKESNOW, "PROBES")
     # each variable alone fails the same way as neither: only both change the outcome
     assert [c.id for c in search.polluters] == ["p.x", "p.y"]
     assert search.changes and search.after_polluters
 
-    lister = cases[ids.index("p.lister")]
-    before = cases[: ids.index("p.lister")]
-    # the leak check undoes the leaked schema, so nothing before the lister changes it ...
+
+def test_find_polluters_finds_what_the_leak_check_undoes_only_with_leaks_kept(tmp_path: Path):
+    cases = load_cases([case_dir(tmp_path, "p", POLLUTERS)])
+    ids = [c.id for c in cases]
+    lister, before = cases[ids.index("p.lister")], cases[: ids.index("p.lister")]
     assert not find_polluters(lister, before, FAKESNOW, "PROBES").polluters
-    # ... unless leaks are kept
     kept = find_polluters(lister, before, FAKESNOW, "PROBES", cleanup=False)
     assert [c.id for c in kept.polluters] == ["p.schema"]
 
 
-def test_find_polluter_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+def test_server_trials_dont_see_each_other_so_an_innocent_case_isnt_blamed():
+    victim = select("victim", "select count(*) from information_schema.databases")
+    innocent, creator = select("innocent"), select("creator", "create database {schema}_DB")
+    search = find_polluters(victim, [innocent, creator], FAKESNOW_SERVER, "PROBES")
+    assert [c.id for c in search.polluters] == ["creator"]
+
+
+def test_a_case_schema_name_doesnt_make_the_cases_before_it_polluters():
+    victim = select("victim", "select length(current_schema())")
+    before = [select(f"before.{i}") for i in range(10)]
+    assert not find_polluters(victim, before, FAKESNOW, "PROBES").changes
+
+
+def test_find_polluter_cli_prints_the_polluters_and_how_to_reproduce(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
     path = str(case_dir(tmp_path, "p", POLLUTERS))
     assert main([path, "--find-polluter", "p.victim"]) == 0
     out = capsys.readouterr().out
     assert "  p.x\n  p.y\n" in out
     assert f"reproduce: python -m probes {path} --find-polluter p.victim --order p.x,p.y,p.victim" in out
-    assert main([path, "--find-polluter", "p.a"]) == 1
-    assert main([path, "--find-polluter", "p.victim", "--target", SNOWFLAKE]) == 2
+
+
+def test_find_polluter_cli_reproduces_with_the_same_options_quoted(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    path = str(case_dir(tmp_path, "with space", POLLUTERS))
+    assert main([path, "--find-polluter", "p.victim", "--strict-metadata", "--keep-leaks"]) == 0
+    repro = capsys.readouterr().out.split("reproduce: ")[1].strip()
+    assert repro == (
+        f"python -m probes '{path}' --find-polluter p.victim --order p.x,p.y,p.victim --target {FAKESNOW} "
+        "--strict-metadata --keep-leaks"
+    )
+
+
+@pytest.mark.parametrize(
+    ("extra", "status"),
+    [(["--find-polluter", "p.a"], 1), (["--find-polluter", "p.victim", "--target", SNOWFLAKE], 2)],
+    ids=["nothing changes it", "snowflake"],
+)
+def test_find_polluter_cli_exit_status(tmp_path: Path, extra: list[str], status: int):
+    assert main([str(case_dir(tmp_path, "p", POLLUTERS)), *extra]) == status
+
+
+def test_find_polluters_refuses_snowflake():
     with pytest.raises(TargetError, match="not snowflake"):
-        find_polluters(Case(id="v", description="d", sql="select 1"), [], SNOWFLAKE, "PROBES")
+        find_polluters(select("v"), [], SNOWFLAKE, "PROBES")

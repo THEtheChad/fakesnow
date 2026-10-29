@@ -68,6 +68,12 @@ def classify(case: Case, reference: Outcome, candidate: Outcome, target: str, *,
         return Verdict(Status.ERROR, (f"reference: leaked {leaks}: undo it in the case's teardown",))
     if candidate.crash:
         return Verdict(Status.ERROR, (f"harness: {candidate.crash}",))
+    if candidate.leaks and reference.leaks is None:
+        # Whether the reference leaked the same is unknown: not a difference to classify, let alone pin.
+        leaked = f"{target} leaked {'; '.join(candidate.leaks)}"
+        return Verdict(
+            Status.ERROR, (f"reference: leaks not checked (recorded before the leak check), rerun it: {leaked}",)
+        )
     differences = tuple(diff(case.compare, reference, candidate))
     expected = case.expected_for(target) if with_expected else None
     if differences:
@@ -107,8 +113,8 @@ def diff(compare: Compare, reference: Outcome, candidate: Outcome) -> list[str]:
 
 
 def diff_leaks(reference: Outcome, candidate: Outcome) -> list[str]:
-    """A reference that wasn't checked (an earlier run's) counts as having leaked nothing."""
-    if candidate.leaks is None or (reference.leaks or ()) == candidate.leaks:
+    """Nothing when either side wasn't checked (an earlier run's): classify makes leaks against that an error."""
+    if reference.leaks is None or candidate.leaks is None or reference.leaks == candidate.leaks:
         return []
     if not reference.leaks:
         return [f"leaked {'; '.join(candidate.leaks)}"]
