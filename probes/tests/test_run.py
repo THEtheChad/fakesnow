@@ -40,7 +40,12 @@ CASES = [
     Case(id="run.error", description="an error", sql="select * from run_no_such_table"),
     Case(id="run.sessions", description="a Python probe with two sessions", run=two_sessions),
     Case(id="run.expected", description="marked, but matches", sql="select 2", expected=Expected(["#1"], "known")),
-    Case(id="run.schema", description="moves the session", sql="create schema {database}.{schema}_S2"),
+    Case(
+        id="run.schema",
+        description="moves the session",
+        sql="create schema {database}.{schema}_S2",
+        teardown=["drop schema if exists {database}.{schema}_S2"],
+    ),
     Case(id="run.after", description="back in the run's schema", sql="select current_schema()"),
 ]
 """

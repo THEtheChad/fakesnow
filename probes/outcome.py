@@ -101,6 +101,8 @@ class Outcome:
     value / error: what a Python probe returned or raised.
     crash: the harness itself failed running the case.
     notes: things worth showing but not compared, e.g. a failed teardown.
+    leaks: shared state the case left changed after its teardown and its schema was dropped (see probes.isolation),
+        already undone by the runner; empty when there was none, None when it wasn't checked (an earlier run's).
     """
 
     setup_error: Step | None = None
@@ -109,6 +111,7 @@ class Outcome:
     error: ErrorInfo | None = None
     crash: str | None = None
     notes: tuple[str, ...] = field(default=())
+    leaks: tuple[str, ...] | None = None
 
 
 Scrub = Callable[[str], str]
@@ -218,6 +221,7 @@ def encode(value: Any) -> Any:
                     "error": encode(value.error),
                     "crash": value.crash,
                     "notes": list(value.notes),
+                    **({"leaks": list(value.leaks)} if value.leaks is not None else {}),
                 }
             }
         case _:
@@ -273,6 +277,7 @@ def decode(value: Any) -> Any:
                 error=decode(body["error"]),
                 crash=body["crash"],
                 notes=tuple(body["notes"]),
+                leaks=tuple(body["leaks"]) if "leaks" in body else None,
             )
         case "$repr":
             return _Repr(body)

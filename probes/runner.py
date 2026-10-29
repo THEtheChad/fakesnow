@@ -10,6 +10,7 @@ from snowflake.connector.cursor import SnowflakeCursor
 
 from probes.compare import Verdict, classify
 from probes.context import ProbeContext
+from probes.isolation import LeakCheck
 from probes.model import Case
 from probes.outcome import ErrorInfo, Outcome, Scrub, Step, redact, run_statement, scrub_error, scrub_value, scrubber
 from probes.targets import SNOWFLAKE, Names, Session, SnowflakeConfig, open_target
@@ -48,8 +49,8 @@ class Report:
 Progress = Callable[[str, Case], None]
 
 
-def run_case(case: Case, session: Session, number: int = 1) -> Outcome:
-    """Run the run's number-th case in a schema of its own, then reset the session."""
+def run_case(case: Case, session: Session, number: int = 1, leak_check: LeakCheck | None = None) -> Outcome:
+    """Run the run's number-th case in a schema of its own, then reset the session and check for leaks."""
     names = session.enter_case(number)
     scrub = scrubber(names.placeholders)
     cur = session.conn.cursor()
@@ -68,7 +69,8 @@ def run_case(case: Case, session: Session, number: int = 1) -> Outcome:
         dropped = session.leave_case()
     notes = [f"teardown failed: {step.sql}: {step.error}" for step in teardown if step.error]
     notes += [scrub(dropped)] if dropped else []
-    return replace(outcome, notes=tuple(notes)) if notes else outcome
+    outcome = replace(outcome, notes=tuple(notes)) if notes else outcome
+    return replace(outcome, leaks=leak_check.after(case, scrub)) if leak_check else outcome
 
 
 def _run(case: Case, session: Session, cur: SnowflakeCursor, scrub: Scrub) -> Outcome:
@@ -105,14 +107,17 @@ def run_target(
     names: Names,
     snowflake_config: SnowflakeConfig | None = None,
     progress: Progress | None = None,
+    *,
+    cleanup: bool = True,
 ) -> TargetRun:
-    """Run the cases in the order given."""
+    """Run the cases in the order given. cleanup=False leaves the leaks the leak check finds in place."""
     with open_target(target, names, snowflake_config) as session:
         run = TargetRun(target, session.info)
+        leak_check = LeakCheck(session, cleanup=cleanup)
         for number, case in enumerate(cases, start=1):
             if progress:
                 progress(target, case)
-            run.outcomes[case.id] = run_case(case, session, number)
+            run.outcomes[case.id] = run_case(case, session, number, leak_check)
             run.fingerprints[case.id] = case.fingerprint()
         return run
 

@@ -62,6 +62,10 @@ def classify(case: Case, reference: Outcome, candidate: Outcome, target: str, *,
     """
     if broken := reference_problem(reference):
         return Verdict(Status.ERROR, (f"reference: {broken}",))
+    if with_expected and reference.leaks:
+        # What Snowflake leaks is the case's to clean up: fakesnow's leaks are compared like any other outcome.
+        leaks = "; ".join(reference.leaks)
+        return Verdict(Status.ERROR, (f"reference: leaked {leaks}: undo it in the case's teardown",))
     if candidate.crash:
         return Verdict(Status.ERROR, (f"harness: {candidate.crash}",))
     differences = tuple(diff(case.compare, reference, candidate))
@@ -99,6 +103,19 @@ def returned_problem(value: Any) -> str | None:
 
 def diff(compare: Compare, reference: Outcome, candidate: Outcome) -> list[str]:
     """Differences between two outcomes, as one line each; empty when they match."""
+    return diff_results_of(compare, reference, candidate) + diff_leaks(reference, candidate)
+
+
+def diff_leaks(reference: Outcome, candidate: Outcome) -> list[str]:
+    """A reference that wasn't checked (an earlier run's) counts as having leaked nothing."""
+    if candidate.leaks is None or (reference.leaks or ()) == candidate.leaks:
+        return []
+    if not reference.leaks:
+        return [f"leaked {'; '.join(candidate.leaks)}"]
+    return [f"leaked {'; '.join(reference.leaks)} vs {'; '.join(candidate.leaks) or 'nothing'}"]
+
+
+def diff_results_of(compare: Compare, reference: Outcome, candidate: Outcome) -> list[str]:
     if candidate.setup_error:
         step = candidate.setup_error
         return [f"setup failed: {step.sql}: {step.error}"]
@@ -149,12 +166,14 @@ def comparison_fingerprint(case: Case, reference: Outcome, candidate: Outcome) -
         def step_key(step: Step) -> Any:
             return comparable(step.error if step.error else step.result, case.compare)
 
-        return (
+        key = (
             step_key(outcome.setup_error) if outcome.setup_error else None,
             tuple(step_key(step) for step in outcome.steps),
             comparable(outcome.value, case.compare),
             comparable(outcome.error, case.compare),
         )
+        # only when there are leaks, so that pins from before the leak check still apply
+        return (*key, ("leaks", outcome.leaks)) if outcome.leaks else key
 
     body = (case.fingerprint(), repr(case.compare), outcome_key(reference), outcome_key(candidate))
     return hashlib.sha256(json.dumps(encode(body), sort_keys=True).encode()).hexdigest()
