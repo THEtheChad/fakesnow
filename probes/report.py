@@ -10,7 +10,7 @@ from typing import Any
 
 from probes.compare import Status, Verdict, show, show_types
 from probes.model import UNFILED, Case
-from probes.outcome import ErrorInfo, Outcome, ResultSet, Step, decode, encode
+from probes.outcome import ErrorInfo, Fate, Leak, Outcome, ResultSet, Step, decode, encode
 from probes.runner import Report, TargetRun
 from probes.targets import SNOWFLAKE
 
@@ -61,7 +61,7 @@ def describe_order(report: Report) -> str:
     return "in file order"
 
 
-def leaks(report: Report) -> list[tuple[Case, str, tuple[str, ...]]]:
+def leaks(report: Report) -> list[tuple[Case, str, tuple[Leak, ...]]]:
     """Each case and target (the reference too, when it ran now) whose outcome reports leaks."""
     runs = [report.reference, *report.candidates]
     return [
@@ -70,6 +70,25 @@ def leaks(report: Report) -> list[tuple[Case, str, tuple[str, ...]]]:
         for run in runs
         if (outcome := run.outcomes.get(case.id)) and outcome.leaks
     ]
+
+
+def what_was_done(leaked: list[tuple[Case, str, tuple[Leak, ...]]]) -> list[str]:
+    """What the runner's undoing (or not) means for later cases, claiming no more than the leaks record."""
+    fates = {leak.fate for _, _, found in leaked for leak in found}
+    notes: list[str] = []
+    if fates == {Fate.UNDONE}:
+        notes.append("The runner undid every one, so later cases weren't affected.")
+    if Fate.KEPT in fates:
+        notes.append("Those kept were left in place (--keep-leaks), so the cases after them ran with them.")
+    if fates & {Fate.NOT_UNDONE, Fate.UNDO_FAILED}:
+        notes.append("Those the runner couldn't undo were still there for the cases after them.")
+    if None in fates:
+        notes.append("Those unmarked are a recorded run's, which didn't record what was done about them.")
+    return notes
+
+
+def _joined(found: tuple[Leak, ...]) -> str:
+    return "; ".join(map(str, found))
 
 
 def summary(report: Report) -> str:
@@ -103,8 +122,9 @@ def summary(report: Report) -> str:
             detail = v.differences[0].splitlines()[0] if v.differences else ", ".join(e for e in case.all_refs)
             lines.append(f"  {target:<16} {case.id}: {show(detail, 160)}")
     if leaked:
-        lines += ["", "Leaks (shared state a case left changed; the runner undid it unless noted):"]
-        lines += [f"  {target:<16} {case.id}: {show('; '.join(found), 160)}" for case, target, found in leaked]
+        lines += ["", "Leaks (shared state a case left changed, each marked with what the runner did about it):"]
+        lines += [f"  {target:<16} {case.id}: {show(_joined(found), 160)}" for case, target, found in leaked]
+        lines += what_was_done(leaked)
     lines += ["", comparison_scope(report), leak_scope(report)]
     return "\n".join(lines)
 
@@ -171,13 +191,18 @@ def markdown(report: Report) -> str:
             "",
             "## Leaks",
             "",
-            "Shared state a case left changed after its teardown and its schema was dropped. The runner undid it "
-            "unless noted, so later cases weren't affected.",
+            " ".join(
+                [
+                    "Shared state a case left changed after its teardown and its schema was dropped, each marked with "
+                    "what the runner did about it.",
+                    *what_was_done(leaked),
+                ]
+            ),
             "",
             "| case | target | leaks |",
             "|---|---|---|",
         ]
-        out += [f"| `{case.id}` | {target} | {_md_text('; '.join(found))} |" for case, target, found in leaked]
+        out += [f"| `{case.id}` | {target} | {_md_text(_joined(found))} |" for case, target, found in leaked]
 
     if unfiled := unfiled_differences(report):
         out += [
@@ -246,7 +271,7 @@ def outcome_rows(case: Case, outcomes: Sequence[Outcome | None]) -> list[tuple[s
         rows.append((_md_code(sql), cells))
     rows += [("note", [_md_text(note) if o is p else "" for p in outcomes]) for o in present for note in o.notes]
     if any(o.leaks for o in present):
-        rows.append(("leaks", [_md_text("; ".join(o.leaks)) if o and o.leaks else "" for o in outcomes]))
+        rows.append(("leaks", [_md_text(_joined(o.leaks)) if o and o.leaks else "" for o in outcomes]))
     return rows
 
 

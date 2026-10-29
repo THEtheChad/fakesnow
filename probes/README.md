@@ -121,7 +121,10 @@ Expected differences only apply when the reference is Snowflake (or a recorded S
 `--reference fakesnow`, any difference between in-process and server mode is unexpected, leaks included.
 
 A leak (see [Isolation](#isolation)) is reported against the case that left it, naming what it left, and listed
-in its own section of the terminal summary and the Markdown report:
+in its own section of the terminal summary and the Markdown report, marked with what the runner did about it:
+`undone`, `kept` (with `--keep-leaks`), `not undone` (it can't be: a dropped schema or table, say) or `undoing it
+failed`. The reports say later cases weren't affected only when every leak was undone. The JSON report records each
+leak's fate; one recorded before fates were shows its leaks as recorded, claiming neither.
 
 | leaked on | status |
 |---|---|
@@ -129,7 +132,8 @@ in its own section of the terminal summary and the Markdown report:
 | a fakesnow target only | a difference, like any other: unexpected unless marked and pinned (the pin covers the leaks) |
 | a fakesnow target, with a recorded reference from before the leak check | error: whether the reference leaked the same is unknown, so it can't be classified (or pinned) as a difference; rerun the case against the reference |
 
-Cases that leak nothing keep their fingerprints and pins. The summary and the Markdown report end with what the leak
+Cases that leak nothing keep their fingerprints and pins, and so do those that do: what's compared is what leaked,
+and why the runner couldn't undo it if it couldn't, not whether this run undid or kept it. The summary and the Markdown report end with what the leak
 check covered on each target, including "not checked" for a recorded reference from before it.
 
 ## Isolation

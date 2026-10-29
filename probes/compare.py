@@ -64,13 +64,13 @@ def classify(case: Case, reference: Outcome, candidate: Outcome, target: str, *,
         return Verdict(Status.ERROR, (f"reference: {broken}",))
     if with_expected and reference.leaks:
         # What Snowflake leaks is the case's to clean up: fakesnow's leaks are compared like any other outcome.
-        leaks = "; ".join(reference.leaks)
+        leaks = "; ".join(map(str, reference.leaks))
         return Verdict(Status.ERROR, (f"reference: leaked {leaks}: undo it in the case's teardown",))
     if candidate.crash:
         return Verdict(Status.ERROR, (f"harness: {candidate.crash}",))
     if candidate.leaks and reference.leaks is None:
         # Whether the reference leaked the same is unknown: not a difference to classify, let alone pin.
-        leaked = f"{target} leaked {'; '.join(candidate.leaks)}"
+        leaked = f"{target} leaked {'; '.join(map(str, candidate.leaks))}"
         return Verdict(
             Status.ERROR, (f"reference: leaks not checked (recorded before the leak check), rerun it: {leaked}",)
         )
@@ -114,11 +114,17 @@ def diff(compare: Compare, reference: Outcome, candidate: Outcome) -> list[str]:
 
 def diff_leaks(reference: Outcome, candidate: Outcome) -> list[str]:
     """Nothing when either side wasn't checked (an earlier run's): classify makes leaks against that an error."""
-    if reference.leaks is None or candidate.leaks is None or reference.leaks == candidate.leaks:
+    if reference.leaks is None or candidate.leaks is None or compared_leaks(reference) == compared_leaks(candidate):
         return []
+    leaked = "; ".join(map(str, candidate.leaks))
     if not reference.leaks:
-        return [f"leaked {'; '.join(candidate.leaks)}"]
-    return [f"leaked {'; '.join(reference.leaks)} vs {'; '.join(candidate.leaks) or 'nothing'}"]
+        return [f"leaked {leaked}"]
+    return [f"leaked {'; '.join(map(str, reference.leaks))} vs {leaked or 'nothing'}"]
+
+
+def compared_leaks(outcome: Outcome) -> tuple[str, ...]:
+    """An outcome's leaks as compared and pinned: whether the run undid or kept them isn't the target's behavior."""
+    return tuple(leak.compared for leak in outcome.leaks or ())
 
 
 def diff_results_of(compare: Compare, reference: Outcome, candidate: Outcome) -> list[str]:
@@ -193,7 +199,7 @@ def comparison_fingerprint(case: Case, reference: Outcome, candidate: Outcome) -
             comparable(outcome.error, case.compare),
         )
         # only when there are leaks, so that pins from before the leak check still apply
-        return (*key, ("leaks", outcome.leaks)) if outcome.leaks else key
+        return (*key, ("leaks", compared_leaks(outcome))) if outcome.leaks else key
 
     body = (case.fingerprint(), repr(case.compare), outcome_key(reference), outcome_key(candidate))
     return hashlib.sha256(json.dumps(encode(body), sort_keys=True).encode()).hexdigest()
