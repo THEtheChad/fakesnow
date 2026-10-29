@@ -44,7 +44,7 @@ class ProbeContext:
 
     @property
     def schema(self) -> str:
-        """The run's unique schema, the current schema when the probe starts."""
+        """The case's own schema, the current schema when the probe starts, dropped after the case."""
         return self._session.names.schema
 
     def sql(self, text: str) -> str:
@@ -52,7 +52,7 @@ class ProbeContext:
         return self._session.names.render(text)
 
     def connect(self) -> SnowflakeConnection:
-        """Open another session, in the run's database and schema. It's closed after the case."""
+        """Open another session, in the run's database and the case's schema. It's closed after the case."""
         conn = self._session.connect()
         self._opened.append(conn)
         return conn

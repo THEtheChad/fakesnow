@@ -46,30 +46,37 @@ def test_snowflake_interrupt_cleans_up_with_independent_connection(
     cleanup.close.assert_called_once()
 
 
-def test_case_interrupt_still_runs_teardown():
+def test_case_interrupt_still_runs_teardown_and_drops_the_case_schema():
     def interrupt(conn: Any, ctx: ProbeContext) -> None:
         raise KeyboardInterrupt
 
     with open_target("fakesnow", Names.new("DB")) as session:
-        case = Case(id="interrupt", description="interrupt", run=interrupt, teardown=["create table cleaned (x int)"])
+        # outside the case's schema, which is dropped after the case
+        cleaned = f"{session.run_names.database}.{session.run_names.schema}.cleaned"
+        case = Case(
+            id="interrupt", description="interrupt", run=interrupt, teardown=[f"create table {cleaned} (x int)"]
+        )
         with pytest.raises(KeyboardInterrupt):
             run_case(case, session)
         cur = session.conn.cursor()
-        cur.execute("select count(*) from cleaned")
+        cur.execute(f"select count(*) from {cleaned}")
+        assert cur.fetchall() == [(0,)]
+        cur.execute(f"select count(*) from information_schema.schemata where schema_name = '{session.names.run}_C1'")
         assert cur.fetchall() == [(0,)]
 
 
 def test_commented_begin_does_not_leak_transaction_to_next_case():
     with open_target("fakesnow", Names.new("DB")) as session:
+        table = f"{session.run_names.database}.{session.run_names.schema}.t"
+        session.conn.cursor().execute(f"create table {table} (x int)")
         case = Case(
             id="transaction",
             description="open transaction",
-            setup=["create table t (x int)"],
-            sql=["/* comment */ begin", "insert into t values (1)"],
+            sql=["/* comment */ begin", f"insert into {table} values (1)"],
         )
         run_case(case, session)
         cur = session.conn.cursor()
-        cur.execute("select * from t")
+        cur.execute(f"select * from {table}")
         assert cur.fetchall() == []
 
 

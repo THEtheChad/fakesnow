@@ -48,8 +48,10 @@ class Report:
 Progress = Callable[[str, Case], None]
 
 
-def run_case(case: Case, session: Session) -> Outcome:
-    scrub = scrubber(session.names.placeholders)
+def run_case(case: Case, session: Session, number: int = 1) -> Outcome:
+    """Run the run's number-th case in a schema of its own, then reset the session."""
+    names = session.enter_case(number)
+    scrub = scrubber(names.placeholders)
     cur = session.conn.cursor()
     try:
         try:
@@ -62,9 +64,10 @@ def run_case(case: Case, session: Session) -> Outcome:
         session.conn.rollback()
         session.conn.autocommit(True)
         teardown = [run_statement(cur, session.names.render(t), t, scrub) for t in case.teardown]
-        session.restore()
         cur.close()
+        dropped = session.leave_case()
     notes = [f"teardown failed: {step.sql}: {step.error}" for step in teardown if step.error]
+    notes += [scrub(dropped)] if dropped else []
     return replace(outcome, notes=tuple(notes)) if notes else outcome
 
 
@@ -103,12 +106,13 @@ def run_target(
     snowflake_config: SnowflakeConfig | None = None,
     progress: Progress | None = None,
 ) -> TargetRun:
+    """Run the cases in the order given."""
     with open_target(target, names, snowflake_config) as session:
         run = TargetRun(target, session.info)
-        for case in cases:
+        for number, case in enumerate(cases, start=1):
             if progress:
                 progress(target, case)
-            run.outcomes[case.id] = run_case(case, session)
+            run.outcomes[case.id] = run_case(case, session, number)
             run.fingerprints[case.id] = case.fingerprint()
         return run
 
