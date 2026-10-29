@@ -1,18 +1,20 @@
-"""Isolation: each case's own schema, and the leak check. No Snowflake."""
+"""Isolation: each case's own schema, the leak check, and shuffled order. No Snowflake."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from probes.cli import main, run
 from probes.compare import Status, classify, comparison_fingerprint
 from probes.isolation import LeakCheck, State, checks_parameters
 from probes.loader import load_cases
 from probes.model import Case, Expected
 from probes.outcome import Column, Outcome, ResultSet, Step, decode, encode, scrubber
-from probes.report import markdown, summary
-from probes.runner import compare_runs, run_case, run_target
+from probes.report import markdown, summary, to_json
+from probes.runner import compare_runs, run_case, run_target, shuffled
 from probes.targets import FAKESNOW, FAKESNOW_SERVER, Names, open_target
 
 CASES = """
@@ -227,3 +229,38 @@ def test_reports_list_leaks(tmp_path: Path):
     assert f"{FAKESNOW_SERVER:<16} leak.schema: 'schema {{database}}.{{schema}}_L left behind'" in summary(report)
     assert "## Leaks" in markdown(report)
     assert report.verdicts["leak.schema"][FAKESNOW_SERVER].status is Status.MATCH
+
+
+# --- shuffled order
+
+
+def test_shuffle_is_deterministic_and_the_seed_is_reported(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    cases = [Case(id=f"c{i}", description="d", sql="select 1") for i in range(20)]
+    assert [c.id for c in shuffled(cases, 7)] == [c.id for c in shuffled(cases, 7)]
+    assert [c.id for c in shuffled(cases, 7)] != [c.id for c in shuffled(cases, 8)]
+    assert [c.id for c in shuffled(cases, 7)] != [c.id for c in cases]
+
+    loaded = load_cases([case_dir(tmp_path, "iso", CASES)])
+    order = shuffled(loaded, 3)
+    report = run(loaded, order, FAKESNOW, [FAKESNOW_SERVER], None, verbose=False, seed=3)
+    # the same order on every target, reported in file order
+    assert list(report.reference.outcomes) == list(report.candidates[0].outcomes) == [c.id for c in order]
+    assert [c.id for c in report.cases] == [c.id for c in loaded]
+    assert "--shuffle 3" in summary(report)
+    assert "--shuffle 3" in markdown(report)
+    assert to_json(report)["order"] == {"shuffle": 3, "cases": [c.id for c in order]}
+
+    js = tmp_path / "report.json"
+    args = [str(tmp_path / "iso"), "--reference", FAKESNOW, "--target", FAKESNOW_SERVER, "--json", str(js)]
+    assert main([*args, "--shuffle", "random"]) == 0
+    seed = json.loads(js.read_text())["order"]["shuffle"]
+    assert f"--shuffle {seed}" in capsys.readouterr().out
+    assert json.loads(js.read_text())["order"]["cases"] == [c.id for c in shuffled(loaded, seed)]
+
+
+def test_order_runs_exactly_the_cases_given(tmp_path: Path):
+    path = str(case_dir(tmp_path, "iso", CASES))
+    base = [path, "--reference", FAKESNOW, "--target", FAKESNOW_SERVER]
+    assert main([*base, "--order", "iso.read,iso.create"]) == 0
+    assert main([*base, "--order", "iso.nope"]) == 2
+    assert main([*base, "--order", "iso.read", "--shuffle", "1"]) == 2

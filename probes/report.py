@@ -53,6 +53,14 @@ def unfiled_differences(report: Report) -> list[tuple[Case, list[str], str]]:
     return found
 
 
+def describe_order(report: Report) -> str:
+    if report.seed is not None:
+        return f"in random order (--shuffle {report.seed})"
+    if report.order != [c.id for c in report.cases]:
+        return "in the order given (--order)"
+    return "in file order"
+
+
 def leaks(report: Report) -> list[tuple[Case, str, tuple[str, ...]]]:
     """Each case and target (the reference too, when it ran now) whose outcome reports leaks."""
     runs = [report.reference, *report.candidates]
@@ -65,7 +73,7 @@ def leaks(report: Report) -> list[tuple[Case, str, tuple[str, ...]]]:
 
 
 def summary(report: Report) -> str:
-    lines = [f"{len(report.cases)} cases; reference {describe_target(report.reference)}"]
+    lines = [f"{len(report.cases)} cases {describe_order(report)}; reference {describe_target(report.reference)}"]
     leaked = leaks(report)
     for run in report.candidates:
         c = counts(report, run.target)
@@ -121,7 +129,7 @@ def markdown(report: Report) -> str:
     out = [
         "# fakesnow probes",
         "",
-        f"Run {time.strftime('%Y-%m-%d %H:%M %Z')}: {len(report.cases)} cases, "
+        f"Run {time.strftime('%Y-%m-%d %H:%M %Z')}: {len(report.cases)} cases {describe_order(report)}, "
         f"reference {describe_target(report.reference)}, "
         f"compared with {', '.join(describe_target(r) for r in report.candidates)}.",
         "",
@@ -264,6 +272,7 @@ def to_json(report: Report) -> dict[str, Any]:
         "format": JSON_FORMAT,
         "names": {"database": report.names.database, "schema": report.names.schema},
         "reference": report.reference.target,
+        "order": {"shuffle": report.seed, "cases": report.order},
         "runs": {
             run.target: {
                 "info": run.info,

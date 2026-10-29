@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -36,6 +37,10 @@ class Report:
     verdicts: dict[str, dict[str, Verdict]]
     """case id -> target -> verdict"""
     names: Names
+    seed: int | None = None
+    """The --shuffle seed the cases ran in the order of, None for the order of the files."""
+    order: list[str] = field(default_factory=list[str])
+    """Case ids in the order they ran; cases are reported in the order of the files."""
 
     @property
     def with_expected(self) -> bool:
@@ -122,6 +127,13 @@ def run_target(
         return run
 
 
+def shuffled(cases: Sequence[Case], seed: int) -> list[Case]:
+    """The cases in a random order that depends only on the seed and the cases, the same on every target."""
+    order = list(cases)
+    random.Random(seed).shuffle(order)
+    return order
+
+
 def missing_outcome(case: Case, reference: TargetRun) -> Outcome | None:
     """For a recorded reference: a crash outcome when it has nothing for this case as it's now written."""
     if case.id not in reference.outcomes:
@@ -131,7 +143,14 @@ def missing_outcome(case: Case, reference: TargetRun) -> Outcome | None:
     return None
 
 
-def compare_runs(cases: Sequence[Case], reference: TargetRun, candidates: Sequence[TargetRun], names: Names) -> Report:
+def compare_runs(
+    cases: Sequence[Case],
+    reference: TargetRun,
+    candidates: Sequence[TargetRun],
+    names: Names,
+    seed: int | None = None,
+    order: Sequence[str] = (),
+) -> Report:
     with_expected = reference.target == SNOWFLAKE
     verdicts: dict[str, dict[str, Verdict]] = {}
     for case in cases:
@@ -140,4 +159,4 @@ def compare_runs(cases: Sequence[Case], reference: TargetRun, candidates: Sequen
             c.target: classify(case, ref_outcome, c.outcomes[case.id], c.target, with_expected=with_expected)
             for c in candidates
         }
-    return Report(list(cases), reference, list(candidates), verdicts, names)
+    return Report(list(cases), reference, list(candidates), verdicts, names, seed, list(order or (c.id for c in cases)))
