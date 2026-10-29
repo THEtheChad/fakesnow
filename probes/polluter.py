@@ -1,9 +1,10 @@
 """Find the earlier cases that change a case's outcome (its polluters), like RSpec's --bisect.
 
 The victim runs alone, then after the cases that ran before it in some order; if its outcome changes, delta
-debugging (Zeller and Hildebrandt's ddmin) narrows those cases down to a smallest set that still changes it. Every
-trial runs on a fresh target, and "changes" uses the case's own comparison (probes.compare.outcome_changes), so a
-case that compares types only isn't changed by different values.
+debugging (Zeller and Hildebrandt's ddmin) narrows those cases down to a set that still changes it and is 1-minimal:
+without any one of them, it doesn't (not necessarily the smallest such set). Every trial runs on a fresh target, and
+"changes" uses the case's own comparison (probes.compare.outcome_changes), so a case that compares types only isn't
+changed by different values.
 
 Each trial runs a few hundred cases at most: fakesnow only, never Snowflake.
 """
@@ -29,7 +30,8 @@ class Search:
     changes: list[str]
     """How after_all differs from alone; empty when nothing before the victim changes it."""
     polluters: list[Case]
-    """A smallest set of the cases before the victim, in their order, that changes its outcome."""
+    """A 1-minimal set of the cases before the victim, in their order, that changes its outcome: without any one of
+    them, it doesn't."""
     after_polluters: list[str]
     """How the victim's outcome after just the polluters differs from alone."""
     trials: int
@@ -70,7 +72,8 @@ def find_polluters(
 
 
 def ddmin(items: list[T], fails: Callable[[list[T]], bool]) -> list[T]:
-    """A 1-minimal subset of items, in their order, for which fails is true, given that it is for all of them.
+    """A 1-minimal subset of items, in their order, for which fails is true, given that it is for all of them: fails is
+    false without any one of its items. Not necessarily the smallest such subset.
 
     Zeller and Hildebrandt, "Simplifying and Isolating Failure-Inducing Input" (2002): try each of n chunks, then
     each complement, and split finer when neither fails.
