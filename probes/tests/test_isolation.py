@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from snowflake.connector.converter import SnowflakeConverter
 
 from fakesnow.instance import FakeSnow
 from probes import targets
@@ -571,7 +572,7 @@ class StubSnowflake:
         self.database, self.schema, self.role, self.warehouse = "DB", "PROBES_X", "PROBER", "WH"
         self.schemas = {"INFORMATION_SCHEMA", "PUBLIC", "PROBES_X"}
         self.temporary_tables: dict[tuple[str, str], str] = {}
-        """(schema, name) -> created_on, each table's own"""
+        """(schema, name) -> created_on, each table's own: seconds since the epoch, as Snowflake sends it"""
         self.created = 0
         # (value, type, level): inherited (level empty) unless the run's connection sets them at login
         self.parameters = {"AUTOCOMMIT": ("true", "BOOLEAN", ""), "LOCK_TIMEOUT": ("43200", "NUMBER", "")}
@@ -626,7 +627,7 @@ class StubCursor:
             if key in conn.temporary_tables and not m[1]:
                 raise RuntimeError(f"stand-in: {key} already exists")
             conn.created += 1
-            conn.temporary_tables[key] = f"2026-10-29 12:00:00.{conn.created:03d} -0700"
+            conn.temporary_tables[key] = f"1793275200.{conn.created:03d}"
         elif m := re.fullmatch(r'drop table if exists "DB"\."(\w+)"\."(\w+)"', text):
             conn.temporary_tables.pop((m[1], m[2]), None)
         elif m := re.fullmatch(r"drop table \w+\.(\w+)\.(\w+)", text, re.IGNORECASE):
@@ -640,8 +641,12 @@ class StubCursor:
             rows = [(None, name, None, conn.database, None) for name in sorted(listed)]
             self.result(["created_on", "name", "kind", "database_name", "schema_name"], rows)
         elif text.startswith("show tables in database"):
+            # created_on is a TIMESTAMP_LTZ, which the connector gives in the session's TIMEZONE
+            converter = SnowflakeConverter()
+            converter.set_parameter("TIMEZONE", conn.parameters["TIMEZONE"][0])
+            ltz = converter.to_python_method("TIMESTAMP_LTZ", {"scale": 3})
             rows = [
-                (created_on, name, conn.database, schema, "TEMPORARY", "", "", 0, 0, "PROBER", "1")
+                (ltz(created_on), name, conn.database, schema, "TEMPORARY", "", "", 0, 0, "PROBER", "1")
                 for (schema, name), created_on in sorted(conn.temporary_tables.items())
             ]
             columns = ["created_on", "name", "database_name", "schema_name", "kind", "comment", "cluster_by"]
@@ -800,6 +805,43 @@ def test_a_temporary_table_replaced_on_snowflake_is_known_by_its_creation_time(r
     assert conn.temporary_tables[("PUBLIC", "THEIRS")] != first
     assert shown(outcomes[0]) == ("temporary table {database}.PUBLIC.THEIRS replaced (not undone)",)
     assert outcomes[1].leaks == ()
+
+
+@pytest.mark.parametrize(
+    ("changes", "leaks"),
+    [
+        (
+            ["alter session set timezone = 'America/New_York'"],
+            ("session parameter TIMEZONE changed from 'UTC' to 'America/New_York' (undone)",),
+        ),
+        (["alter session set timezone = 'America/New_York'", "alter session set timezone = 'UTC'"], ()),
+    ],
+    ids=["restored-by-the-runner", "restored-by-the-case"],
+)
+def test_a_temporary_table_left_in_place_on_snowflake_isnt_replaced_by_a_timezone_change(
+    changes: list[str], leaks: tuple[str, ...]
+):
+    # the reviewer's repro: SHOW TABLES gives the same creation time in another TIMEZONE as other text
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    run_case(select("leaves", "create temporary table {database}.PUBLIC.theirs (x int)"), session, check)
+    outcomes = [run_case(case, session, check) for case in [select("changes", changes), select("next")]]
+    assert [shown(o) for o in outcomes] == [leaks, ()]
+    assert conn.parameters["TIMEZONE"] == ("UTC", "STRING", "SESSION")
+    assert conn.temporary_tables.keys() == {("PUBLIC", "THEIRS")}
+
+
+def test_a_temporary_table_kept_on_snowflake_isnt_replaced_by_a_kept_timezone_change():
+    session, conn = stub_session()
+    check = LeakCheck(session, cleanup=False)
+    run_case(select("leaves", "create temporary table {database}.PROBES_X.home_tt (x int)"), session, check)
+    changes = select("changes", "alter session set timezone = 'America/New_York'")
+    outcomes = [run_case(case, session, check) for case in [changes, select("next")]]
+    assert [shown(o) for o in outcomes] == [
+        ("session parameter TIMEZONE changed from 'UTC' to 'America/New_York' (kept)",),
+        (),
+    ]
+    assert conn.temporary_tables.keys() == {("PROBES_X", "HOME_TT")}
 
 
 def test_an_undo_that_runs_but_changes_nothing_didnt_take_and_is_reported_once():

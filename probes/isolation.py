@@ -38,6 +38,7 @@ import json
 import re
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Any
 
 import snowflake.connector.errors
@@ -165,8 +166,8 @@ class State:
     """Named after the run."""
     temporary_tables: Mapping[tuple[str, str, str], str] = field(default_factory=dict[tuple[str, str, str], str])
     """The main session's, as (database, schema, name) -> identity: on fakesnow its OID, on Snowflake its creation time
-    (SHOW TABLES' created_on), either of which a table replaced under the same name doesn't keep. On fakesnow, also
-    those whose schema is gone (see Session.temporary_tables), which on Snowflake went with it."""
+    (SHOW TABLES' created_on, as a UTC instant), either of which a table replaced under the same name doesn't keep. On
+    fakesnow, also those whose schema is gone (see Session.temporary_tables), which on Snowflake went with it."""
     context: Mapping[str, str | None] = field(default_factory=dict[str, str | None])
     """The main session's role, warehouse and (on Snowflake) secondary roles."""
     parameters: Mapping[str, Parameter] | None = None
@@ -294,7 +295,7 @@ class LeakCheck:
         databases = {str(d["name"]) for d in found if str(d["name"]).startswith(names.run)}
         # not TERSE: its kind is TABLE for a temporary table too; only the full listing says TEMPORARY
         tables = {
-            (str(t["database_name"]), str(t["schema_name"]), str(t["name"])): str(t["created_on"])
+            (str(t["database_name"]), str(t["schema_name"]), str(t["name"])): _instant(t["created_on"])
             for t in self._show(f"tables in database {names.database}")
             if str(t["kind"]).upper() == "TEMPORARY"
         }
@@ -396,6 +397,14 @@ class LeakCheck:
         cur.execute(f"show {what}")
         columns = [d.name.lower() for d in cur.description]
         return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
+
+
+def _instant(created_on: Any) -> str:
+    """A creation time as the same text whatever the session's TIMEZONE: SHOW gives a TIMESTAMP_LTZ, which the
+    connector renders in it, so one instant reads differently once a case changes TIMEZONE."""
+    if isinstance(created_on, datetime) and created_on.tzinfo is not None:
+        return created_on.astimezone(UTC).isoformat()
+    return str(created_on)
 
 
 def _variable_changes(
