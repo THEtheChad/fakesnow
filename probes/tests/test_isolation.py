@@ -1313,6 +1313,28 @@ def test_find_polluter_cli_reproduces_with_the_same_options_quoted(tmp_path: Pat
     )
 
 
+def test_find_polluter_cli_runs_in_the_baselines_database_and_reproduces_with_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+):
+    baseline = tmp_path / "baseline.json"
+    baseline.write_text(json.dumps({"names": {"database": "RECORDED_DB"}}))
+    databases: list[str] = []
+
+    def recording(*args: Any, **kwargs: Any) -> Any:
+        databases.append(args[3])
+        return find_polluters(*args, **kwargs)
+
+    monkeypatch.setattr("probes.cli.find_polluters", recording)
+    path = str(case_dir(tmp_path, "p", POLLUTERS))
+    assert main([path, "--find-polluter", "p.victim", "--baseline", str(baseline)]) == 0
+    assert databases == ["RECORDED_DB"]
+    repro = capsys.readouterr().out.split("reproduce: ")[1].strip()
+    assert repro == (
+        f"python -m probes {path} --find-polluter p.victim --order p.x,p.y,p.victim --target {FAKESNOW} "
+        f"--baseline {baseline}"
+    )
+
+
 @pytest.mark.parametrize(
     ("extra", "status"),
     [(["--find-polluter", "p.a"], 1), (["--find-polluter", "p.victim", "--target", SNOWFLAKE], 2)],

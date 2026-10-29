@@ -210,8 +210,10 @@ def find_polluter(args: argparse.Namespace, order: list[Case]) -> int:
         print(line, file=sys.stderr)
 
     try:
-        search = find_polluters(victim, before, target, DEFAULT_DATABASE, cleanup=not args.keep_leaks, log=log)
-    except (TargetError, snowflake.connector.errors.Error) as e:
+        # in the database a normal run would use, so names in outcomes are the same
+        database = recorded_database(args.baseline) if args.baseline else DEFAULT_DATABASE
+        search = find_polluters(victim, before, target, database, cleanup=not args.keep_leaks, log=log)
+    except (TargetError, ValueError, KeyError, OSError, snowflake.connector.errors.Error) as e:
         print(f"error: {redact(str(e))}", file=sys.stderr)
         return 2
     if not search.changes:
@@ -227,6 +229,7 @@ def find_polluter(args: argparse.Namespace, order: list[Case]) -> int:
     print("\n".join(f"  {show(line, 300)}" for line in search.after_polluters))
     repro = ["python", "-m", "probes", *map(str, args.paths), "--find-polluter", victim.id]
     repro += ["--order", ",".join(c.id for c in [*search.polluters, victim]), "--target", target]
+    repro += ["--baseline", str(args.baseline)] if args.baseline else []
     repro += ["--strict-metadata"] if args.strict_metadata else []
     repro += ["--keep-leaks"] if args.keep_leaks else []
     print(f"reproduce: {shlex.join(repro)}")

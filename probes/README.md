@@ -221,7 +221,9 @@ that still changes it, each trial on a fresh target (for `fakesnow-server`, a fa
 types only isn't changed by other values). It runs on one fakesnow `--target` (default `fakesnow`), never
 Snowflake, and prints the polluters, how they change the case, and a command that reproduces it with `--order`.
 It runs with the leak check's cleanup, as a normal run does, so it finds what the check misses; add
-`--keep-leaks` to find cases whose leaks the check already reports.
+`--keep-leaks` to find cases whose leaks the check already reports. With `--baseline`, it runs in the recorded run's
+database, as a normal run against that baseline does (otherwise `PROBES`), and the command it prints keeps
+`--baseline`.
 
 ## Adding a case
 
