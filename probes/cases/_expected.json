@@ -33,8 +33,8 @@
     "fakesnow-server": "538b84d05c50c958fd5222ef62bbc60f8e7c13a5e6eac506a2c3d0c779df6acc"
   },
   "ddl.drop-schema-drops-temporary-table": {
-    "fakesnow": "8c489e3bd5356e1d68cdf504250f10b6cf1fd9defb6d13772735868e4d7145c2",
-    "fakesnow-server": "8c489e3bd5356e1d68cdf504250f10b6cf1fd9defb6d13772735868e4d7145c2"
+    "fakesnow": "f68ed20b22635db1c77d690ef88f9027cfc82a2257b2c2dfa8b51fd20ea630aa",
+    "fakesnow-server": "f68ed20b22635db1c77d690ef88f9027cfc82a2257b2c2dfa8b51fd20ea630aa"
   },
   "ddl.file-format-apostrophe": {
     "fakesnow": "470a682efdcdb32b5c2fb89d931e0ec0aeccf325cb55b565508d96ce5e0007e3",
