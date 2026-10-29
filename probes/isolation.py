@@ -18,8 +18,12 @@ What's checked, per target:
 
 The current database and schema aren't: the next case's CREATE SCHEMA makes its own schema current.
 
+A schema, database or temporary table that's gone (an earlier case's, left in place) is reported, never undone: what
+it held went with it.
+
 Each SHOW is a round trip to Snowflake, so there the snapshot lists only what the case could have changed, judged
-from its statements by reach(); fakesnow's snapshot is in-process (or local) and lists everything after every case.
+from its statements by reach() (and objects whenever a temporary table is still there: DROP TABLE doesn't say
+TEMPORARY); fakesnow's snapshot is in-process (or local) and lists everything after every case.
 """
 
 from __future__ import annotations
@@ -217,6 +221,9 @@ class LeakCheck:
     def after(self, case: Case, scrub: Scrub) -> tuple[str, ...]:
         """What the case leaked, with run-specific names scrubbed, once it's been undone."""
         listed = reach(case) if self.cleanup else EVERYTHING
+        if self.before.temporary_tables:
+            # a DROP TABLE doesn't say TEMPORARY: it could drop one that an earlier case left and the runner couldn't
+            listed = replace(listed, objects=True)
         after = self.snapshot(listed, self.before)
         leaks = list(self.changes(self.before, after))
         descriptions = [leak.description for leak in leaks]
@@ -325,6 +332,9 @@ class LeakCheck:
             else:
                 undo = f"drop table if exists temp.main.{quoted(name)}"
             yield Leak(f"temporary table {database}.{schema}.{name} left behind", undo)
+        for database, schema, name in sorted(before.temporary_tables - after.temporary_tables):
+            # its rows are gone with it: there's nothing to put back
+            yield Leak(f"temporary table {database}.{schema}.{name} dropped", None)
         for key, old in before.context.items():
             new = after.context.get(key)
             if new != old:
