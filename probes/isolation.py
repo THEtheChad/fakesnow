@@ -173,6 +173,17 @@ class Parameter:
     level: str
     """Where its value is set: SESSION, or else it's inherited (USER, ACCOUNT, or empty for the default)."""
 
+    @property
+    def session_set(self) -> bool:
+        return self.level.upper() == "SESSION"
+
+    def shown(self, other: Parameter) -> str:
+        """Its value for a leak's description, with its type and where it's set when those are what changed."""
+        changed = [self.type] if self.type != other.type else []
+        if self.session_set != other.session_set:
+            changed.append("set in the session" if self.session_set else "inherited")
+        return f"{self.value!r} ({', '.join(changed)})" if changed else repr(self.value)
+
 
 @dataclass(frozen=True)
 class Leak:
@@ -321,9 +332,10 @@ class LeakCheck:
         old_parameters, new_parameters = before.parameters or {}, after.parameters or {}
         for key in sorted(old_parameters.keys() & new_parameters.keys()):
             old, new = old_parameters[key], new_parameters[key]
-            if (new.value, new.type) != (old.value, old.type):
-                description = f"session parameter {key} changed from {_shown(old.value, old.type, new.type)} to "
-                yield Leak(description + _shown(new.value, new.type, old.type), _parameter_undo(key, old))
+            # an equal value set in the session is a change too: it's no longer inherited, or the other way round
+            if (new.value, new.type, new.session_set) != (old.value, old.type, old.session_set):
+                description = f"session parameter {key} changed from {old.shown(new)} to {new.shown(old)}"
+                yield Leak(description, _parameter_undo(key, old))
         if before.variables is not None and after.variables is not None:
             yield from _variable_changes(before.variables, after.variables)
 
@@ -384,7 +396,7 @@ def _context_undo(key: str, old: str | None) -> str | None:
 
 
 def _parameter_undo(key: str, old: Parameter) -> str | None:
-    if old.level.upper() != "SESSION":
+    if not old.session_set:
         # inherited (from the user, the account or the default): unsetting it inherits it again
         return f"alter session unset {key}"
     value = _literal(old.value, old.type)
