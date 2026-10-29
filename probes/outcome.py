@@ -102,6 +102,12 @@ class Fate(enum.Enum):
     NOT_UNDONE = "not undone"
     """The runner has no way to undo it, e.g. a dropped table, whose rows are gone."""
     UNDO_FAILED = "undoing it failed"
+    UNDO_DIDNT_TAKE = "undoing it didn't take"
+    """The undo ran without an error, but the snapshot after it still found the leak."""
+
+
+NOT_THE_RUNS = "not named after the run"
+"""Ends the description of a schema left behind or dropped that isn't named after the run (see probes.isolation)."""
 
 
 @dataclass(frozen=True)
@@ -124,7 +130,14 @@ class Leak:
             return f"{self.description} (not undone)"
         if self.fate is Fate.UNDO_FAILED:
             return f"{self.description} (undoing it failed: {self.error})"
+        if self.fate is Fate.UNDO_DIDNT_TAKE:
+            return f"{self.description} (undoing it didn't take)"
         return self.description
+
+    @property
+    def not_the_runs(self) -> bool:
+        """Whether it's a schema not named after the run, which another session could have left or dropped."""
+        return self.description.endswith(f", {NOT_THE_RUNS}")
 
     def __str__(self) -> str:
         return f"{self.description} ({self.fate.value})" if self.fate in (Fate.UNDONE, Fate.KEPT) else self.compared

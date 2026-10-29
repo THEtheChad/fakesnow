@@ -65,7 +65,15 @@ def classify(case: Case, reference: Outcome, candidate: Outcome, target: str, *,
     if with_expected and reference.leaks:
         # What Snowflake leaks is the case's to clean up: fakesnow's leaks are compared like any other outcome.
         leaks = "; ".join(map(str, reference.leaks))
-        return Verdict(Status.ERROR, (f"reference: leaked {leaks}: undo it in the case's teardown",))
+        if any(leak.not_the_runs for leak in reference.leaks):
+            # a schema the case may never have touched: the run's database isn't the run's alone
+            hint = (
+                "another session using the database during the run could have done that (a live run needs the "
+                "probe database to itself); if the case did, undo it in its teardown"
+            )
+        else:
+            hint = "undo it in the case's teardown"
+        return Verdict(Status.ERROR, (f"reference: leaked {leaks}: {hint}",))
     if candidate.crash:
         return Verdict(Status.ERROR, (f"harness: {candidate.crash}",))
     if candidate.leaks and reference.leaks is None:

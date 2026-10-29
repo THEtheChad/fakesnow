@@ -77,10 +77,10 @@ def what_was_done(leaked: list[tuple[Case, str, tuple[Leak, ...]]]) -> list[str]
     fates = {leak.fate for _, _, found in leaked for leak in found}
     notes: list[str] = []
     if fates == {Fate.UNDONE}:
-        notes.append("The runner undid every one, so later cases weren't affected.")
+        notes.append("The runner undid every one and found each gone afterwards, so later cases ran without them.")
     if Fate.KEPT in fates:
         notes.append("Those kept were left in place (--keep-leaks), so the cases after them ran with them.")
-    if fates & {Fate.NOT_UNDONE, Fate.UNDO_FAILED}:
+    if fates & {Fate.NOT_UNDONE, Fate.UNDO_FAILED, Fate.UNDO_DIDNT_TAKE}:
         notes.append("Those the runner couldn't undo were still there for the cases after them.")
     if None in fates:
         notes.append("Those unmarked are a recorded run's, which didn't record what was done about them.")

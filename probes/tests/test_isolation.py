@@ -88,7 +88,7 @@ def case_dir(tmp_path: Path, name: str, source: str) -> Path:
     return path
 
 
-def select(case_id: str, sql: str = "select 1") -> Case:
+def select(case_id: str, sql: str | list[str] = "select 1") -> Case:
     return Case(id=case_id, description="d", sql=sql)
 
 
@@ -257,6 +257,49 @@ def test_a_temporary_table_dropped_from_outside_the_case_schema_is_a_leak_not_un
         run_case(temporary_in_run_schema(names), session, check)
         outcome = run_case(drops, session, check)
     assert shown(outcome) == ("temporary table {database}.{run_schema}.HOME_TT dropped (not undone)",)
+
+
+@pytest.mark.parametrize(
+    "replaces",
+    [
+        ["drop table {shared}", "create temporary table {shared} as select 2 as x"],
+        ["create or replace temporary table {shared} as select 2 as x"],
+    ],
+    ids=["drop-and-create", "create-or-replace"],
+)
+@pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
+def test_a_temporary_table_replaced_under_the_same_name_is_the_replacing_cases_leak(target: str, replaces: list[str]):
+    # the reviewer's repro: A leaves a shared temporary table holding 1, B replaces it with one holding 2, C reads 2
+    names = Names.new("PROBES")
+    shared = f"{{database}}.{names.schema}.shared_tt"
+    cases = [
+        select("a", f"create temporary table {shared} as select 1 as x"),
+        select("b", [sql.format(shared=shared) for sql in replaces]),
+        select("c", f"select x from {shared}"),
+    ]
+    with open_target(target, names) as session:
+        check = LeakCheck(session, cleanup=False)
+        a, b, c = (run_case(case, session, check) for case in cases)
+    assert shown(a) == ("temporary table {database}.{run_schema}.SHARED_TT left behind (kept)",)
+    assert shown(b) == ("temporary table {database}.{run_schema}.SHARED_TT replaced (not undone)",)
+    assert c.leaks == ()
+    assert c.steps[0].result
+    assert c.steps[0].result.rows == ((2,),)
+
+
+@pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
+def test_rows_added_to_a_temporary_table_left_in_place_dont_replace_it(target: str):
+    # its OID stays: what it holds isn't checked
+    names = Names.new("PROBES")
+    shared = f"{{database}}.{names.schema}.shared_tt"
+    cases = [
+        select("a", f"create temporary table {shared} as select 1 as x"),
+        select("b", [f"insert into {shared} values (2)", f"alter table {shared} add column y int"]),
+    ]
+    with open_target(target, names) as session:
+        check = LeakCheck(session, cleanup=False)
+        outcomes = [run_case(case, session, check) for case in cases]
+    assert outcomes[1].leaks == ()
 
 
 def test_undoing_a_leak_isnt_a_leak_of_the_next_case():
@@ -527,14 +570,17 @@ class StubSnowflake:
     def __init__(self) -> None:
         self.database, self.schema, self.role, self.warehouse = "DB", "PROBES_X", "PROBER", "WH"
         self.schemas = {"INFORMATION_SCHEMA", "PUBLIC", "PROBES_X"}
-        self.temporary_tables: set[tuple[str, str]] = set()
-        """(schema, name)"""
+        self.temporary_tables: dict[tuple[str, str], str] = {}
+        """(schema, name) -> created_on, each table's own"""
+        self.created = 0
         # (value, type, level): inherited (level empty) unless the run's connection sets them at login
         self.parameters = {"AUTOCOMMIT": ("true", "BOOLEAN", ""), "LOCK_TIMEOUT": ("43200", "NUMBER", "")}
         self.parameters |= {key: parameter(value) for key, value in targets.SNOWFLAKE_SESSION_PARAMETERS.items()}
         self.variables: dict[str, tuple[str | None, str]] = {}
         self.secondary_roles = '{"roles":"","value":"ALL"}'
         self.statements: list[str] = []
+        self.ignored: tuple[str, ...] = ()
+        """Statements starting with any of these run without error but change nothing."""
 
     def cursor(self) -> "StubCursor":
         return StubCursor(self)
@@ -566,17 +612,25 @@ class StubCursor:
         conn.statements.append(sql)
         text = re.sub(r"/\*.*?\*/", " ", sql).strip()
         self.result(["status"], [("ok",)])
+        if text.startswith(conn.ignored):
+            return self
         if m := re.fullmatch(r"create schema \w+\.(\w+)", text):
             conn.schemas.add(m[1])
             conn.schema = m[1]
         elif m := re.fullmatch(r"drop schema if exists \w+\.(\w+) cascade", text):
             conn.schemas.discard(m[1])
-        elif m := re.fullmatch(r"create temporary table \w+\.(\w+)\.(\w+) \(x int\)", text, re.IGNORECASE):
-            conn.temporary_tables.add((m[1].upper(), m[2].upper()))
+        elif m := re.fullmatch(
+            r"create (or replace )?temporary table \w+\.(\w+)\.(\w+) \(x int\)", text, re.IGNORECASE
+        ):
+            key = (m[2].upper(), m[3].upper())
+            if key in conn.temporary_tables and not m[1]:
+                raise RuntimeError(f"stand-in: {key} already exists")
+            conn.created += 1
+            conn.temporary_tables[key] = f"2026-10-29 12:00:00.{conn.created:03d} -0700"
         elif m := re.fullmatch(r'drop table if exists "DB"\."(\w+)"\."(\w+)"', text):
-            conn.temporary_tables.discard((m[1], m[2]))
+            conn.temporary_tables.pop((m[1], m[2]), None)
         elif m := re.fullmatch(r"drop table \w+\.(\w+)\.(\w+)", text, re.IGNORECASE):
-            conn.temporary_tables.discard((m[1].upper(), m[2].upper()))
+            conn.temporary_tables.pop((m[1].upper(), m[2].upper()), None)
         elif text.startswith("show terse tables"):
             # TERSE says TABLE for a temporary table too (checked live)
             rows = [(None, name, "TABLE", conn.database, schema) for schema, name in sorted(conn.temporary_tables)]
@@ -587,8 +641,8 @@ class StubCursor:
             self.result(["created_on", "name", "kind", "database_name", "schema_name"], rows)
         elif text.startswith("show tables in database"):
             rows = [
-                (None, name, conn.database, schema, "TEMPORARY", "", "", 0, 0, "PROBER", "1")
-                for schema, name in sorted(conn.temporary_tables)
+                (created_on, name, conn.database, schema, "TEMPORARY", "", "", 0, 0, "PROBER", "1")
+                for (schema, name), created_on in sorted(conn.temporary_tables.items())
             ]
             columns = ["created_on", "name", "database_name", "schema_name", "kind", "comment", "cluster_by"]
             self.result([*columns, "rows", "bytes", "owner", "retention_time"], rows)
@@ -715,7 +769,7 @@ def test_a_temporary_table_on_snowflake_is_found_by_show_tables_and_dropped():
     outcome = run_case(select("leaves", "create temporary table {database}.PROBES_X.home_tt (x int)"), session, check)
     assert shown(outcome) == ("temporary table {database}.{run_schema}.HOME_TT left behind (undone)",)
     assert 'drop table if exists "DB"."PROBES_X"."HOME_TT"' in conn.statements
-    assert conn.temporary_tables == set()
+    assert conn.temporary_tables == {}
 
 
 def test_a_temporary_table_left_in_place_on_snowflake_is_listed_for_a_drop_table_that_names_no_kind():
@@ -723,9 +777,39 @@ def test_a_temporary_table_left_in_place_on_snowflake_is_listed_for_a_drop_table
     session, conn = stub_session()
     check = LeakCheck(session)
     run_case(select("leaves", "create temporary table {database}.PUBLIC.theirs (x int)"), session, check)
-    assert conn.temporary_tables == {("PUBLIC", "THEIRS")}
+    assert conn.temporary_tables.keys() == {("PUBLIC", "THEIRS")}
     dropped = run_case(select("drops", "drop table {database}.PUBLIC.theirs"), session, check)
     assert shown(dropped) == ("temporary table {database}.PUBLIC.THEIRS dropped (not undone)",)
+
+
+@pytest.mark.parametrize(
+    "replaces",
+    [
+        ["drop table {database}.PUBLIC.theirs", "create temporary table {database}.PUBLIC.theirs (x int)"],
+        ["create or replace temporary table {database}.PUBLIC.theirs (x int)"],
+    ],
+    ids=["drop-and-create", "create-or-replace"],
+)
+def test_a_temporary_table_replaced_on_snowflake_is_known_by_its_creation_time(replaces: list[str]):
+    # left in place (outside the run's schemas), then replaced by a later case under the same name
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    run_case(select("leaves", "create temporary table {database}.PUBLIC.theirs (x int)"), session, check)
+    first = conn.temporary_tables[("PUBLIC", "THEIRS")]
+    outcomes = [run_case(case, session, check) for case in [select("replaces", replaces), select("next")]]
+    assert conn.temporary_tables[("PUBLIC", "THEIRS")] != first
+    assert shown(outcomes[0]) == ("temporary table {database}.PUBLIC.THEIRS replaced (not undone)",)
+    assert outcomes[1].leaks == ()
+
+
+def test_an_undo_that_runs_but_changes_nothing_didnt_take_and_is_reported_once():
+    session, conn = stub_session()
+    conn.ignored = ("unset",)
+    check = LeakCheck(session)
+    outcomes = [run_case(case, session, check) for case in [select("sets", "set v = 1"), select("next", "set w = 2")]]
+    assert shown(outcomes[0]) == ("session variable V set to '1' (undoing it didn't take)",)
+    assert shown(outcomes[1]) == ("session variable W set to '2' (undoing it didn't take)",)
+    assert conn.variables.keys() == {"V", "W"}
 
 
 def test_a_null_variable_unset_is_set_back_to_a_null_of_its_type():
@@ -824,7 +908,7 @@ def test_a_teardown_that_could_change_the_session_is_followed_by_another_reset()
 
 BEFORE = State(
     schemas=frozenset({"PUBLIC", "PROBES_X"}),
-    temporary_tables=frozenset({("DB", "PROBES_X", "OLD")}),
+    temporary_tables={("DB", "PROBES_X", "OLD"): "2026-10-29 12:00:00.000 -0700"},
     context={"role": "PROBER", "warehouse": "WH", "secondary roles": '{"roles":"","value":""}'},
     parameters={
         "TIMEZONE": Parameter("UTC", "STRING", "SESSION"),
@@ -870,7 +954,12 @@ def changed(**changes: Any) -> State:
             None,
             id="schema-left-not-the-runs",
         ),
-        pytest.param(changed(schemas=frozenset({"PROBES_X"})), "schema DB.PUBLIC dropped", None, id="schema-dropped"),
+        pytest.param(
+            changed(schemas=frozenset({"PROBES_X"})),
+            "schema DB.PUBLIC dropped, not named after the run",
+            None,
+            id="schema-dropped-not-the-runs",
+        ),
         pytest.param(
             changed(databases=frozenset({"PROBES_X_C1_DB"})),
             "database PROBES_X_C1_DB left behind",
@@ -878,24 +967,31 @@ def changed(**changes: Any) -> State:
             id="database-left",
         ),
         pytest.param(
-            changed(temporary_tables=BEFORE.temporary_tables | {("DB", "PROBES_X", "MINE")}),
+            changed(temporary_tables={**BEFORE.temporary_tables, ("DB", "PROBES_X", "MINE"): "t"}),
             "temporary table DB.PROBES_X.MINE left behind",
             'drop table if exists "DB"."PROBES_X"."MINE"',
             id="temporary-table-left",
         ),
         # DROP TABLE drops a permanent table of the same name if the temporary one is gone
         pytest.param(
-            changed(temporary_tables=BEFORE.temporary_tables | {("DB", "PUBLIC", "THEIRS")}),
+            changed(temporary_tables={**BEFORE.temporary_tables, ("DB", "PUBLIC", "THEIRS"): "t"}),
             "temporary table DB.PUBLIC.THEIRS left behind",
             None,
             id="temporary-table-left-not-the-runs",
         ),
         # its data is gone: not recreated
         pytest.param(
-            changed(temporary_tables=frozenset()),
+            changed(temporary_tables={}),
             "temporary table DB.PROBES_X.OLD dropped",
             None,
             id="temporary-table-dropped",
+        ),
+        # dropped and created again, or CREATE OR REPLACE: the same name, created later
+        pytest.param(
+            changed(temporary_tables={("DB", "PROBES_X", "OLD"): "2026-10-29 12:00:01.000 -0700"}),
+            "temporary table DB.PROBES_X.OLD replaced",
+            None,
+            id="temporary-table-replaced",
         ),
         pytest.param(
             changed(context={"role": "OTHER"}),
@@ -984,6 +1080,14 @@ def test_a_snowflake_leak_and_how_its_undone(after: State, leak: str, undo: str 
     assert {found.description: found.undo for found in check.changes(BEFORE, after)} == {leak: undo}
 
 
+def test_a_dropped_schema_named_after_the_run_is_the_runs_own():
+    session, _ = stub_session()
+    check = LeakCheck.__new__(LeakCheck)
+    check.session = session
+    before = replace(BEFORE, schemas=BEFORE.schemas | {"PROBES_X_C1_S2"})
+    assert [found.description for found in check.changes(before, BEFORE)] == ["schema DB.PROBES_X_C1_S2 dropped"]
+
+
 # --- comparing and reporting leaks
 
 
@@ -1000,6 +1104,18 @@ def test_a_reference_leak_is_an_error_only_when_the_reference_is_snowflake():
     # fakesnow as the reference: leaks are compared like the rest of the outcome
     assert classify(case, leaked, leaked, FAKESNOW_SERVER, with_expected=False).status is Status.MATCH
     assert classify(case, leaked, clean, FAKESNOW_SERVER, with_expected=False).status is Status.UNEXPECTED
+
+
+def test_a_reference_leak_not_named_after_the_run_could_be_another_sessions():
+    leaked = (Leak("schema {database}.SCRATCH left behind, not named after the run", Fate.NOT_UNDONE),)
+    reference = Outcome(steps=RESULT.steps, leaks=leaked)
+    verdict = classify(select("a"), reference, reference, FAKESNOW, with_expected=True)
+    assert verdict.status is Status.ERROR
+    assert verdict.differences == (
+        "reference: leaked schema {database}.SCRATCH left behind, not named after the run (not undone): another "
+        "session using the database during the run could have done that (a live run needs the probe database to "
+        "itself); if the case did, undo it in its teardown",
+    )
 
 
 def test_a_candidate_only_leak_is_a_difference_that_can_be_pinned():
@@ -1112,10 +1228,26 @@ def test_reports_list_leaks(tmp_path: Path):
 
 @pytest.mark.parametrize("cleanup", [True, False], ids=["undone", "kept"])
 @pytest.mark.parametrize("render", [summary, markdown])
-def test_reports_say_later_cases_werent_affected_only_when_every_leak_was_undone(
+def test_reports_say_later_cases_ran_without_leaks_only_when_every_one_was_undone(
     tmp_path: Path, render: Callable[[Report], str], cleanup: bool
 ):
-    assert ("so later cases weren't affected" in render(leak_report(tmp_path, cleanup=cleanup))) == cleanup
+    assert ("so later cases ran without them" in render(leak_report(tmp_path, cleanup=cleanup))) == cleanup
+
+
+@pytest.mark.parametrize("fate", [Fate.NOT_UNDONE, Fate.UNDO_FAILED, Fate.UNDO_DIDNT_TAKE])
+def test_reports_say_leaks_the_runner_couldnt_undo_were_there_for_later_cases(tmp_path: Path, fate: Fate):
+    report = leak_report(tmp_path)
+    outcome = report.candidates[0].outcomes["leak.schema"]
+    report.candidates[0].outcomes["leak.schema"] = replace(outcome, leaks=(Leak("schema S left behind", fate),))
+    text = summary(report)
+    assert "Those the runner couldn't undo were still there for the cases after them." in text
+    assert "so later cases ran without them" not in text
+
+
+def test_a_leak_whose_undo_didnt_take_is_compared_as_such():
+    leak = Leak("session variable V set to '1'", Fate.UNDO_DIDNT_TAKE)
+    assert leak.compared == str(leak) == "session variable V set to '1' (undoing it didn't take)"
+    assert decode(json.loads(json.dumps(encode(Outcome(leaks=(leak,)))))).leaks == (leak,)
 
 
 @pytest.mark.parametrize("render", [summary, markdown])
@@ -1158,7 +1290,7 @@ def test_an_old_reports_leak_is_shown_as_recorded(tmp_path: Path):
 @pytest.mark.parametrize(
     ("note", "said"),
     [
-        ("so later cases weren't affected", False),
+        ("so later cases ran without them", False),
         ("Those unmarked are a recorded run's, which didn't record what was done about them.", True),
     ],
     ids=["no-claim", "unmarked"],
