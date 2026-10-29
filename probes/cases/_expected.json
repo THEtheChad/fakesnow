@@ -53,8 +53,8 @@
     "fakesnow-server": "92f26496736a2212387cfa273ed7920c8013caebd9ad99ea03e9132af193442b"
   },
   "ddl.show-schemas": {
-    "fakesnow": "0eb6b264a91b5f8ecef1d632aee29522d47c3f9efb49b079d9655097f1e3e999",
-    "fakesnow-server": "0eb6b264a91b5f8ecef1d632aee29522d47c3f9efb49b079d9655097f1e3e999"
+    "fakesnow": "4f1f5721ba9dab7600dc26230cd5e2fff3fe75ea6ffeda98a61f37381c4c312c",
+    "fakesnow-server": "4f1f5721ba9dab7600dc26230cd5e2fff3fe75ea6ffeda98a61f37381c4c312c"
   },
   "ddl.show-tables": {
     "fakesnow": "6d12adcdc0dc0451d915a5eb88164386360a3dbe95d81b6b9a8b99af8d280135",
