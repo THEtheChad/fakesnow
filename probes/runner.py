@@ -11,7 +11,7 @@ from snowflake.connector.cursor import SnowflakeCursor
 
 from probes.compare import Verdict, classify
 from probes.context import ProbeContext
-from probes.isolation import LeakCheck, reach
+from probes.isolation import LeakCheck, reach, statements_reach
 from probes.model import Case
 from probes.outcome import ErrorInfo, Outcome, Scrub, Step, redact, run_statement, scrub_error, scrub_value, scrubber
 from probes.targets import SNOWFLAKE, Names, Session, SnowflakeConfig, open_target
@@ -70,11 +70,13 @@ def run_case(case: Case, session: Session, leak_check: LeakCheck | None = None) 
     finally:
         # Teardown also runs on KeyboardInterrupt. Reset before teardown so an aborted transaction
         # cannot prevent dropping resources. A reset failure makes the run unusable, not a match.
-        # Only a case that could have left a transaction open or autocommit off needs it (two round trips).
+        # Only a case that could have left a transaction open or autocommit off needs it (two round trips),
+        # and again after a teardown that could have, before the schema's dropped and the next case runs.
         if outcome is None or outcome.crash or reach(case).session:
-            session.conn.rollback()
-            session.conn.autocommit(True)
+            _reset(session)
         teardown = [run_statement(cur, session.names.render(t), t, scrub) for t in case.teardown]
+        if statements_reach(case.teardown).session:
+            _reset(session)
         cur.close()
         dropped = session.leave_case()
     assert outcome  # else the case's exception is on its way up
@@ -82,6 +84,12 @@ def run_case(case: Case, session: Session, leak_check: LeakCheck | None = None) 
     notes += [scrub(dropped)] if dropped else []
     outcome = replace(outcome, notes=tuple(notes)) if notes else outcome
     return replace(outcome, leaks=leak_check.after(case, scrub)) if leak_check else outcome
+
+
+def _reset(session: Session) -> None:
+    """End any transaction and turn autocommit back on."""
+    session.conn.rollback()
+    session.conn.autocommit(True)
 
 
 def _run(case: Case, session: Session, cur: SnowflakeCursor, scrub: Scrub) -> Outcome:

@@ -1,5 +1,6 @@
 """Isolation: each case's own schema, the leak check, shuffled order, and finding polluters. No Snowflake."""
 
+import importlib
 import json
 import re
 from pathlib import Path
@@ -8,10 +9,12 @@ from typing import Any
 
 import pytest
 
+from fakesnow.instance import FakeSnow
+from probes import targets
 from probes.cli import main, run
 from probes.compare import Status, classify, comparison_fingerprint
-from probes.isolation import EVERYTHING, LeakCheck, Reach, State, reach
-from probes.loader import load_cases
+from probes.isolation import EVERYTHING, LeakCheck, Parameter, Reach, State, changes_context, reach
+from probes.loader import LoadError, load_cases
 from probes.model import Case, Expected
 from probes.outcome import Column, Outcome, ResultSet, Step, decode, encode, scrubber
 from probes.polluter import ddmin, find_polluters
@@ -144,6 +147,32 @@ def test_server_runs_in_one_process_dont_see_each_others_databases():
     assert run_target(FAKESNOW_SERVER, [count], Names.new("PROBES")).outcomes["count"] == first
 
 
+def test_a_server_target_forgets_its_sessions_on_the_way_out_and_only_its_own():
+    # probes keeps fakesnow.server() from before the module shadows it, so importing it here is safe
+    server: Any = importlib.import_module("fakesnow.server")
+    unrelated = FakeSnow().connect()  # another instance's session, as another server user's would be
+    server.sessions["unrelated"] = unrelated
+
+    def opens_another(conn: Any, ctx: Any) -> int:
+        ctx.connect()
+        return 1
+
+    cases = [select("a"), Case(id="b", description="d", run=opens_another)]
+    try:
+        run_target(FAKESNOW_SERVER, cases, Names.new("PROBES"))
+        assert server.sessions == {"unrelated": unrelated}
+
+        def fails(target: str, case: Case) -> None:
+            if case.id == "b":
+                raise RuntimeError("interrupted")
+
+        with pytest.raises(RuntimeError, match="interrupted"):
+            run_target(FAKESNOW_SERVER, cases, Names.new("PROBES"), progress=fails)
+        assert server.sessions == {"unrelated": unrelated}
+    finally:
+        server.sessions.pop("unrelated", None)
+
+
 # --- the leak check on fakesnow
 
 
@@ -199,21 +228,98 @@ def test_keep_leaks_leaves_a_temporary_table_outside_the_case_schema():
     assert outcome.leaks == ("temporary table {database}.{run_schema}.HOME_TT left behind",)
 
 
-def test_a_temporary_table_whose_schema_was_dropped_is_dropped_too_as_on_snowflake():
-    dropped = Case(
-        id="dropped",
-        description="d",
-        setup=["create schema {database}.{schema}_T", "create temporary table {database}.{schema}_T.gone_tt (x int)"],
-        sql="drop schema {database}.{schema}_T cascade",
-    )
+DROPS_ITS_OTHER_SCHEMA = Case(
+    id="dropped",
+    description="d",
+    setup=["create schema {database}.{schema}_T", "create temporary table {database}.{schema}_T.gone_tt (x int)"],
+    sql="drop schema {database}.{schema}_T cascade",
+)
+
+
+@pytest.mark.parametrize("cleanup", [True, False], ids=["undone", "kept"])
+def test_a_temporary_table_left_by_dropping_another_schema_is_a_fakesnow_leak(cleanup: bool):
+    # on Snowflake the table goes with its schema; fakesnow keeps it: only the case's own schema's go silently
     with open_target(FAKESNOW, Names.new("PROBES")) as session:
-        # not a leak, so even when leaks are kept
+        check = LeakCheck(session, cleanup=cleanup)
+        outcome = run_case(DROPS_ITS_OTHER_SCHEMA, session, check)
+        again = run_case(select("again", "create temporary table gone_tt (x int)"), session, check)
+    assert outcome.leaks == ("temporary table {database}.{schema}_T.GONE_TT left behind",)
+    assert (again.steps[0].error is None) == cleanup
+
+
+def test_the_case_schemas_own_temporary_tables_go_with_it_silently():
+    owned = select("owned", "create temporary table {database}.{schema}.own_tt (x int)")
+    with open_target(FAKESNOW, Names.new("PROBES")) as session:
         check = LeakCheck(session, cleanup=False)
-        outcome = run_case(dropped, session, check)
-        assert (
-            run_case(select("again", "create temporary table gone_tt (x int)"), session, check).steps[0].error is None
-        )
+        assert run_case(owned, session, check).leaks == ()
+        assert session.temporary_tables() == {}
+
+
+def test_a_temporary_table_another_schema_owned_is_never_dropped_by_a_later_case():
+    # the reviewer's repro: a temporary table in PROBES.OUTSIDE, then OUTSIDE dropped, then an unrelated case
+    names = Names.new("PROBES")
+    with open_target(FAKESNOW, names) as session:
+        cur = session.conn.cursor()
+        cur.execute(f"create schema {names.database}.OUTSIDE")
+        cur.execute(f"create temporary table {names.database}.OUTSIDE.kept_tt (x int)")
+        cur.execute(f"drop schema {names.database}.OUTSIDE")
+        session.restore()
+        check = LeakCheck(session, cleanup=False)
+        outcome = run_case(select("unrelated"), session, check)
+        assert session.temporary_tables() == {"KEPT_TT": (names.database, "OUTSIDE")}
     assert outcome.leaks == ()
+
+
+@pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
+def test_a_temporary_table_with_a_quote_in_its_name_is_dropped_with_the_case(target: str):
+    quoting = select("quoting", 'create temporary table "a""b" (x int)')
+    with open_target(target, Names.new("PROBES")) as session:
+        check = LeakCheck(session)
+        outcome = run_case(quoting, session, check)
+        again = run_case(quoting, session, check)
+    assert (outcome.notes, outcome.leaks) == ((), ())
+    assert again.steps[0].error is None
+
+
+def test_a_failed_temporary_table_drop_is_a_note_and_keeps_the_outcome(monkeypatch: pytest.MonkeyPatch):
+    # how names were quoted before: a quote in one broke fakesnow's tokenizer, and the case's outcome with it
+    monkeypatch.setattr(targets, "quoted", lambda name: f'"{name}"')
+    quoting = Case(id="quoting", description="d", sql=['create temporary table "a""b" (x int)', "select 1"])
+    with open_target(FAKESNOW, Names.new("PROBES")) as session:
+        check = LeakCheck(session)
+        outcome = run_case(quoting, session, check)
+        assert session.temporary_tables() == {}
+    assert len(outcome.steps) == 2
+    assert outcome.steps[1].result
+    assert len(outcome.notes) == 1
+    assert outcome.notes[0].startswith("dropping the case's temporary tables failed: a\"b: ")
+    # the leak check finds it still there, and drops it with its name quoted properly
+    assert outcome.leaks == ('temporary table {database}.{schema}.a"b left behind',)
+
+
+AUTOCOMMIT_OFF = Case(
+    id="autocommit-off",
+    description="turns autocommit off in its teardown",
+    sql="select 1",
+    teardown=["alter session set autocommit = false"],
+)
+COUNTS_A_ROLLED_BACK_INSERT = Case(
+    id="victim",
+    description="a rolled-back insert leaves nothing",
+    setup=["create table victim_t (x int)"],
+    sql=["insert into victim_t values (1)", "rollback", "select count(*) from victim_t"],
+)
+
+
+@pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
+def test_a_teardown_that_turns_autocommit_off_doesnt_reach_the_next_case(target: str):
+    def count(cases: list[Case]) -> Any:
+        outcome = run_target(target, cases, Names.new("PROBES")).outcomes["victim"]
+        assert outcome.steps[2].result
+        return outcome.steps[2].result.rows
+
+    assert count([COUNTS_A_ROLLED_BACK_INSERT]) == ((1,),)
+    assert count([AUTOCOMMIT_OFF, COUNTS_A_ROLLED_BACK_INSERT]) == ((1,),)
 
 
 # --- what a case could change
@@ -231,6 +337,11 @@ def test_a_temporary_table_whose_schema_was_dropped_is_dropped_too_as_on_snowfla
         "/* c */ begin",
         "call p()",
         "execute immediate 'select 1'",
+        "with p as procedure () returns int language sql as $$ begin set x = 1; return 1; end $$ call p()",
+        "WITH /* c */ p AS PROCEDURE () RETURNS INT LANGUAGE SQL AS 'begin return 1; end' CALL p()",
+        "use role other_role",
+        "use /* c */ secondary roles none",
+        "USE WAREHOUSE other_wh",
         "select 1; alter session set timezone = 'UTC'",  # more than one statement
         "select 'unterminated",
         "/* unterminated select 1",
@@ -286,17 +397,48 @@ def test_every_statement_counts_setup_and_teardown_too():
     assert reach(case) == EVERYTHING
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "use role other_role",
+        "USE SECONDARY ROLES NONE",
+        "use /* c */ secondary roles all",
+        "-- c\nuse warehouse other_wh",
+        "select 1; use role other_role",
+    ],
+)
+@pytest.mark.parametrize("where", ["setup", "sql", "teardown"])
+def test_cases_that_change_role_secondary_roles_or_warehouse_dont_load(tmp_path: Path, sql: str, where: str):
+    fields = {"sql": ["select 1"], where: [sql]}
+    source = f"from probes import Case\nCASES = [Case(id='a', description='d', **{fields!r})]"
+    with pytest.raises(LoadError, match="changes the session's role, secondary roles or warehouse"):
+        load_cases([case_dir(tmp_path, "ctx", source)])
+
+
+@pytest.mark.parametrize(
+    "sql",
+    ["use schema {database}.{schema}", "use database x", "select 'use role x'", "-- use role x\nselect 1", "use x"],
+)
+def test_using_a_database_or_schema_or_quoting_use_role_loads(sql: str):
+    assert not changes_context(sql)
+
+
 # --- the leak check on Snowflake, against a stand-in
 
 
 class StubSnowflake:
-    """Just enough of a Snowflake session for the leak check: schemas, parameters and variables. Records what ran."""
+    """Just enough of a Snowflake session for the leak check: schemas, temporary tables, parameters, variables and
+    secondary roles, listed as Snowflake lists them. Records what ran."""
 
     def __init__(self) -> None:
         self.database, self.schema, self.role, self.warehouse = "DB", "PROBES_X", "PROBER", "WH"
         self.schemas = {"INFORMATION_SCHEMA", "PUBLIC", "PROBES_X"}
-        self.parameters = {"TIMEZONE": ("UTC", "STRING")}
-        self.variables: dict[str, tuple[str, str]] = {}
+        self.temporary_tables: set[tuple[str, str]] = set()
+        """(schema, name)"""
+        # (value, type, level): TIMEZONE as the run's connection sets it, the timeout as the account would
+        self.parameters = {"TIMEZONE": ("UTC", "STRING", "SESSION"), "LOCK_TIMEOUT": ("43200", "NUMBER", "")}
+        self.variables: dict[str, tuple[str | None, str]] = {}
+        self.secondary_roles = '{"roles":"","value":"ALL"}'
         self.statements: list[str] = []
 
     def cursor(self) -> "StubCursor":
@@ -325,20 +467,47 @@ class StubCursor:
             conn.schema = m[1]
         elif m := re.fullmatch(r"drop schema if exists \w+\.(\w+) cascade", text):
             conn.schemas.discard(m[1])
+        elif m := re.fullmatch(r"create temporary table \w+\.(\w+)\.(\w+) \(x int\)", text, re.IGNORECASE):
+            conn.temporary_tables.add((m[1].upper(), m[2].upper()))
+        elif m := re.fullmatch(r'drop table if exists "DB"\."(\w+)"\."(\w+)"', text):
+            conn.temporary_tables.discard((m[1], m[2]))
+        elif text.startswith("show terse tables"):
+            # TERSE says TABLE for a temporary table too (checked live)
+            rows = [(None, name, "TABLE", conn.database, schema) for schema, name in sorted(conn.temporary_tables)]
+            self.result(["created_on", "name", "kind", "database_name", "schema_name"], rows)
         elif text.startswith("show terse"):
             listed = conn.schemas if "schemas" in text else []
             rows = [(None, name, None, conn.database, None) for name in sorted(listed)]
             self.result(["created_on", "name", "kind", "database_name", "schema_name"], rows)
+        elif text.startswith("show tables in database"):
+            rows = [
+                (None, name, conn.database, schema, "TEMPORARY", "", "", 0, 0, "PROBER", "1")
+                for schema, name in sorted(conn.temporary_tables)
+            ]
+            columns = ["created_on", "name", "database_name", "schema_name", "kind", "comment", "cluster_by"]
+            self.result([*columns, "rows", "bytes", "owner", "retention_time"], rows)
         elif text == "show parameters in session":
-            rows = [(k, v, "", "", "", t) for k, (v, t) in conn.parameters.items()]
+            rows = [(k, v, "", level, "", t) for k, (v, t, level) in conn.parameters.items()]
             self.result(["key", "value", "default", "level", "description", "type"], rows)
         elif text == "show variables":
             rows = [(1, None, None, k, v, t, None) for k, (v, t) in conn.variables.items()]
             self.result(["session_id", "created_on", "updated_on", "name", "value", "type", "comment"], rows)
+        elif text == "select current_secondary_roles()":
+            self.result(["CURRENT_SECONDARY_ROLES()"], [(conn.secondary_roles,)])
+        elif m := re.fullmatch(r"use secondary roles (all|none)", text, re.IGNORECASE):
+            conn.secondary_roles = '{"roles":"","value":"ALL"}' if m[1].lower() == "all" else '{"roles":"","value":""}'
         elif m := re.fullmatch(r"alter\s+session\s+set\s+(\w+)\s*=\s*'([^']*)'", text, re.IGNORECASE):
-            conn.parameters[m[1].upper()] = (m[2], "STRING")
+            conn.parameters[m[1].upper()] = (m[2], "STRING", "SESSION")
+        elif m := re.fullmatch(r"alter\s+session\s+set\s+(\w+)\s*=\s*(\d+)", text, re.IGNORECASE):
+            conn.parameters[m[1].upper()] = (m[2], "NUMBER", "SESSION")
+        elif m := re.fullmatch(r"alter session unset (\w+)", text):
+            conn.parameters[m[1]] = ("43200", "NUMBER", "")  # the stand-in's only inherited parameter
         elif m := re.fullmatch(r"set\s+(\w+)\s*=\s*(\d+)", text, re.IGNORECASE):
             conn.variables[m[1].upper()] = (m[2], "fixed")
+        elif m := re.fullmatch(r"set\s+(\w+)\s*=\s*'([^']*)'", text, re.IGNORECASE):
+            conn.variables[m[1].upper()] = (m[2], "text")
+        elif m := re.fullmatch(r"set (\w+) = cast\(null as varchar\)", text):
+            conn.variables[m[1]] = (None, "text")
         elif m := re.fullmatch(r"unset\s+(\w+)", text, re.IGNORECASE):
             conn.variables.pop(m[1].upper(), None)
         return self
@@ -351,6 +520,9 @@ class StubCursor:
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         return self.rows
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        return self.rows[0] if self.rows else None
 
     def close(self) -> None:
         pass
@@ -369,7 +541,59 @@ def test_a_parameter_change_is_blamed_on_the_case_that_made_it_and_undone():
     outcomes = [run_case(case, session, check) for case in [changed, select("next"), select("after")]]
     assert outcomes[0].leaks == ("session parameter TIMEZONE changed from 'UTC' to 'America/New_York'",)
     assert outcomes[1].leaks == outcomes[2].leaks == ()
-    assert conn.parameters["TIMEZONE"] == ("UTC", "STRING")
+    assert conn.parameters["TIMEZONE"] == ("UTC", "STRING", "SESSION")
+
+
+def test_an_inherited_parameter_is_unset_rather_than_set_to_its_value():
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    outcome = run_case(select("changes", "alter session set lock_timeout = 5"), session, check)
+    assert outcome.leaks == ("session parameter LOCK_TIMEOUT changed from '43200' to '5'",)
+    assert "alter session unset LOCK_TIMEOUT" in conn.statements
+    assert conn.parameters["LOCK_TIMEOUT"] == ("43200", "NUMBER", "")
+
+
+def test_a_temporary_table_on_snowflake_is_found_by_show_tables_and_dropped():
+    # TERSE lists it as TABLE: only the full SHOW TABLES says TEMPORARY
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    outcome = run_case(select("leaves", "create temporary table {database}.PROBES_X.home_tt (x int)"), session, check)
+    assert outcome.leaks == ("temporary table {database}.{run_schema}.HOME_TT left behind",)
+    assert 'drop table if exists "DB"."PROBES_X"."HOME_TT"' in conn.statements
+    assert conn.temporary_tables == set()
+
+
+def test_a_null_variable_unset_is_set_back_to_a_null_of_its_type():
+    session, conn = stub_session()
+    conn.variables["N"] = (None, "text")
+    check = LeakCheck(session)
+    outcome = run_case(select("unsets", "unset n"), session, check)
+    assert outcome.leaks == ("session variable N unset",)
+    assert conn.variables == {"N": (None, "text")}
+    assert "set N = cast(null as varchar)" in conn.statements
+
+
+def test_a_variable_whose_type_changed_is_a_leak():
+    session, conn = stub_session()
+    conn.variables["V"] = ("1", "fixed")
+    check = LeakCheck(session)
+    outcome = run_case(select("retypes", "set v = '1'"), session, check)
+    assert outcome.leaks == ("session variable V changed from '1' (fixed) to '1' (text)",)
+    assert conn.variables == {"V": ("1", "fixed")}
+
+
+def python_probe(case_id: str, sql: str) -> Case:
+    return Case(id=case_id, description="d", run=lambda conn, ctx: conn.cursor().execute(sql) and None)
+
+
+def test_secondary_roles_a_python_probe_changed_are_a_leak_and_set_back():
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    outcome = run_case(python_probe("secondary", "use secondary roles none"), session, check)
+    assert outcome.leaks == (
+        'session secondary roles changed from {"roles":"","value":"ALL"} to {"roles":"","value":""}',
+    )
+    assert conn.secondary_roles == '{"roles":"","value":"ALL"}'
 
 
 def test_a_session_variable_is_reported_and_unset():
@@ -402,7 +626,7 @@ def test_ddl_on_schemas_adds_a_snapshot_of_objects_only():
         "drop schema if exists DB.X cascade",
         "show terse schemas",
         "show terse databases like 'X%'",
-        "show terse tables",
+        "show tables",
     ]
 
 
@@ -414,16 +638,23 @@ def test_a_case_that_could_change_the_session_resets_it_and_lists_everything():
         "drop schema if exists DB.X cascade",
         "show terse schemas",
         "show terse databases like 'X%'",
-        "show terse tables",
+        "show tables",
         "show parameters",
         "show variables",
+        "select current_secondary_roles()",
         "unset X",
         "show terse schemas",
         "show terse databases like 'X%'",
-        "show terse tables",
+        "show tables",
         "show parameters",
         "show variables",
+        "select current_secondary_roles()",
     ]
+
+
+def test_a_teardown_that_could_change_the_session_is_followed_by_another_reset():
+    case = Case(id="a", description="d", sql="select 1", teardown=["alter session set autocommit = false"])
+    assert round_trips(case)[:5] == ["create schema DB.X", "rollback", "autocommit True", "rollback", "autocommit True"]
 
 
 def test_snowflake_leaks_and_how_they_are_undone():
@@ -432,17 +663,40 @@ def test_snowflake_leaks_and_how_they_are_undone():
     check.session = session
     before = State(
         schemas=frozenset({"PUBLIC", "PROBES_X"}),
-        context={"role": "PROBER", "warehouse": "WH"},
-        parameters={"TIMEZONE": ("UTC", "STRING"), "STATEMENT_TIMEOUT_IN_SECONDS": ("60", "NUMBER")},
-        variables={"KEPT": ("1", "fixed"), "GONE": ("a'b", "text")},
+        context={"role": "PROBER", "warehouse": "WH", "secondary roles": '{"roles":"","value":""}'},
+        parameters={
+            "TIMEZONE": Parameter("UTC", "STRING", "SESSION"),
+            "STATEMENT_TIMEOUT_IN_SECONDS": Parameter("60", "NUMBER", "SESSION"),
+            "LOCK_TIMEOUT": Parameter("43200", "NUMBER", ""),
+            "ODD": Parameter("x", "ENUM?", "SESSION"),
+        },
+        variables={
+            "KEPT": ("1", "fixed"),
+            "GONE": ("a'b", "text"),
+            "NULL_GONE": (None, "fixed"),
+            "RETYPED": ("1", "fixed"),
+            "NULLED": ("5", "fixed"),
+            "ODD": ("2026-10-29", "date"),
+        },
     )
     after = State(
         schemas=frozenset({"PROBES_X", "PROBES_X_C1_S2", "SOMEONE_ELSES"}),
         databases=frozenset({"PROBES_X_C1_DB"}),
         temporary_tables=frozenset({("DB", "PROBES_X", "MINE"), ("DB", "PUBLIC", "THEIRS")}),
-        context={"role": "OTHER", "warehouse": "WH"},
-        parameters={"TIMEZONE": ("America/New_York", "STRING"), "STATEMENT_TIMEOUT_IN_SECONDS": ("5", "NUMBER")},
-        variables={"KEPT": ("2", "fixed"), "new_one": ("x", "text")},
+        context={"role": "OTHER", "warehouse": "WH", "secondary roles": '{"roles":"R1","value":"R1"}'},
+        parameters={
+            "TIMEZONE": Parameter("America/New_York", "STRING", "SESSION"),
+            "STATEMENT_TIMEOUT_IN_SECONDS": Parameter("5", "NUMBER", "SESSION"),
+            "LOCK_TIMEOUT": Parameter("1", "NUMBER", "SESSION"),
+            "ODD": Parameter("y", "ENUM?", "SESSION"),
+        },
+        variables={
+            "KEPT": ("2", "fixed"),
+            "new_one": ("x", "text"),
+            "NULLED": (None, "fixed"),
+            "RETYPED": ("1", "text"),
+            "ODD": ("2026-10-30", "date"),
+        },
     )
     leaks = {leak.description: leak.undo for leak in check.changes(before, after)}
     assert leaks == {
@@ -455,13 +709,24 @@ def test_snowflake_leaks_and_how_they_are_undone():
         # DROP TABLE drops a permanent table of the same name if the temporary one is gone
         "temporary table DB.PUBLIC.THEIRS left behind": None,
         "session role changed from PROBER to OTHER": 'use role "PROBER"',
+        'session secondary roles changed from {"roles":"","value":""} to {"roles":"R1","value":"R1"}': (
+            "use secondary roles none"
+        ),
         "session parameter STATEMENT_TIMEOUT_IN_SECONDS changed from '60' to '5'": (
             "alter session set STATEMENT_TIMEOUT_IN_SECONDS = 60"
         ),
         "session parameter TIMEZONE changed from 'UTC' to 'America/New_York'": "alter session set TIMEZONE = 'UTC'",
+        # inherited before: unset, so it's inherited again
+        "session parameter LOCK_TIMEOUT changed from '43200' to '1'": "alter session unset LOCK_TIMEOUT",
+        # a type the runner can't write a literal of: reported, not undone
+        "session parameter ODD changed from 'x' to 'y'": None,
         "session variable new_one set to 'x'": 'unset "new_one"',
         "session variable GONE unset": "set GONE = 'a\\'b'",
+        "session variable NULL_GONE unset": "set NULL_GONE = cast(null as number)",
         "session variable KEPT changed from '1' to '2'": "set KEPT = 1",
+        "session variable RETYPED changed from '1' (fixed) to '1' (text)": "set RETYPED = 1",
+        "session variable NULLED changed from '5' to None": "set NULLED = 5",
+        "session variable ODD changed from '2026-10-29' to '2026-10-30'": None,
     }
 
 
