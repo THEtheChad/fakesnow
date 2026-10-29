@@ -124,18 +124,30 @@ def test_names_recognise_other_runs():
     assert not names.is_other_run("PUBLIC")
 
 
+def iso_run(tmp_path: Path, target: str, ids: list[str]) -> dict[str, Outcome]:
+    by_id = {case.id: case for case in load_cases([case_dir(tmp_path, "iso", CASES)])}
+    return run_target(target, [by_id[i] for i in ids], Names.new("PROBES")).outcomes
+
+
 @pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
-def test_each_case_runs_in_its_own_schema(tmp_path: Path, target: str):
-    cases = load_cases([case_dir(tmp_path, "iso", CASES)])
-    run = run_target(target, cases, Names.new("PROBES"))
-    created = run.outcomes["iso.create"]
+def test_a_case_is_in_its_own_schema_and_outcomes_name_it_schema(tmp_path: Path, target: str):
+    created = iso_run(tmp_path, target, ["iso.create"])["iso.create"]
     assert created.steps[1].result
     assert created.steps[1].result.rows == (("{schema}", "{schema}_S2", "{schema:lower}"),)
-    assert created.leaks == ()
-    read = run.outcomes["iso.read"]
+
+
+@pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
+def test_a_table_one_case_creates_doesnt_reach_the_next(tmp_path: Path, target: str):
+    outcomes = iso_run(tmp_path, target, ["iso.create", "iso.read"])
+    assert outcomes["iso.create"].leaks == ()
+    read = outcomes["iso.read"]
     assert read.steps[0].error
     assert read.steps[0].error.sqlstate == "42S02"
-    session = run.outcomes["iso.session"].value
+
+
+@pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
+def test_another_session_opens_in_the_cases_schema(tmp_path: Path, target: str):
+    session = iso_run(tmp_path, target, ["iso.session"])["iso.session"].value
     assert isinstance(session, ResultSet)
     assert session.rows == (("{schema}",),)
 
