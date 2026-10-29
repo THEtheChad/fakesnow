@@ -56,8 +56,12 @@ _ENV_PARAMS = {
     "HOST": "host",
 }
 
-# applied to every Snowflake session the run opens
+# applied to every Snowflake session the run opens, so each is set in the session (SHOW PARAMETERS' level SESSION)
+# before the leak check's first snapshot
 SNOWFLAKE_SESSION_PARAMETERS: dict[str, str | int | bool] = {
+    # the runner turns it back on after a case that could have turned it off (ALTER SESSION SET): set from the start,
+    # that isn't a change from an inherited value to one set in the session
+    "AUTOCOMMIT": True,
     "TIMEZONE": "UTC",
     # a probe is a handful of rows: anything slower is a mistake, so stop it before it costs anything
     "STATEMENT_TIMEOUT_IN_SECONDS": 60,

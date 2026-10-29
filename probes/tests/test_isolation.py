@@ -468,8 +468,9 @@ class StubSnowflake:
         self.schemas = {"INFORMATION_SCHEMA", "PUBLIC", "PROBES_X"}
         self.temporary_tables: set[tuple[str, str]] = set()
         """(schema, name)"""
-        # (value, type, level): TIMEZONE as the run's connection sets it, the timeout as the account would
-        self.parameters = {"TIMEZONE": ("UTC", "STRING", "SESSION"), "LOCK_TIMEOUT": ("43200", "NUMBER", "")}
+        # (value, type, level): inherited (level empty) unless the run's connection sets them at login
+        self.parameters = {"AUTOCOMMIT": ("true", "BOOLEAN", ""), "LOCK_TIMEOUT": ("43200", "NUMBER", "")}
+        self.parameters |= {key: parameter(value) for key, value in targets.SNOWFLAKE_SESSION_PARAMETERS.items()}
         self.variables: dict[str, tuple[str | None, str]] = {}
         self.secondary_roles = '{"roles":"","value":"ALL"}'
         self.statements: list[str] = []
@@ -481,7 +482,16 @@ class StubSnowflake:
         self.statements.append("rollback")
 
     def autocommit(self, mode: bool) -> None:
+        # the connector's ALTER SESSION SET autocommit
         self.statements.append(f"autocommit {mode}")
+        self.parameters["AUTOCOMMIT"] = parameter(mode)
+
+
+def parameter(value: str | int | bool) -> tuple[str, str, str]:
+    """A parameter set in the session, as SHOW PARAMETERS lists it."""
+    if isinstance(value, bool):
+        return str(value).lower(), "BOOLEAN", "SESSION"
+    return str(value), "NUMBER" if isinstance(value, int) else "STRING", "SESSION"
 
 
 class StubCursor:
@@ -533,8 +543,8 @@ class StubCursor:
             conn.parameters[m[1].upper()] = (m[2], "STRING", "SESSION")
         elif m := re.fullmatch(r"alter\s+session\s+set\s+(\w+)\s*=\s*(\d+)", text, re.IGNORECASE):
             conn.parameters[m[1].upper()] = (m[2], "NUMBER", "SESSION")
-        elif m := re.fullmatch(r"alter session unset (\w+)", text):
-            conn.parameters[m[1]] = ("43200", "NUMBER", "")  # the stand-in's only inherited parameter
+        elif m := re.fullmatch(r"alter session unset (\w+)", text, re.IGNORECASE):
+            conn.parameters[m[1].upper()] = ("43200", "NUMBER", "")  # the stand-in's only inherited parameter
         elif m := re.fullmatch(r"set\s+(\w+)\s*=\s*(\d+)", text, re.IGNORECASE):
             conn.variables[m[1].upper()] = (m[2], "fixed")
         elif m := re.fullmatch(r"set\s+(\w+)\s*=\s*'([^']*)'", text, re.IGNORECASE):
@@ -581,9 +591,58 @@ def test_an_inherited_parameter_is_unset_rather_than_set_to_its_value():
     session, conn = stub_session()
     check = LeakCheck(session)
     outcome = run_case(select("changes", "alter session set lock_timeout = 5"), session, check)
-    assert outcome.leaks == ("session parameter LOCK_TIMEOUT changed from '43200' to '5'",)
+    assert outcome.leaks == (
+        "session parameter LOCK_TIMEOUT changed from '43200' (inherited) to '5' (set in the session)",
+    )
     assert "alter session unset LOCK_TIMEOUT" in conn.statements
     assert conn.parameters["LOCK_TIMEOUT"] == ("43200", "NUMBER", "")
+
+
+def test_an_inherited_parameter_set_in_the_session_to_the_same_value_is_a_leak_and_unset():
+    # the reviewer's repro: LOCK_TIMEOUT inherited at 43200, then set in the session to 43200
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    outcomes = [
+        run_case(case, session, check)
+        for case in [select("sets", "alter session set lock_timeout = 43200"), select("next")]
+    ]
+    assert outcomes[0].leaks == (
+        "session parameter LOCK_TIMEOUT changed from '43200' (inherited) to '43200' (set in the session)",
+    )
+    assert outcomes[1].leaks == ()
+    assert "alter session unset LOCK_TIMEOUT" in conn.statements
+    assert conn.parameters["LOCK_TIMEOUT"] == ("43200", "NUMBER", "")
+
+
+def test_a_parameter_set_in_the_session_unset_to_the_same_inherited_value_is_a_leak_and_set_again():
+    session, conn = stub_session()
+    conn.parameters["LOCK_TIMEOUT"] = ("43200", "NUMBER", "SESSION")
+    check = LeakCheck(session)
+    outcomes = [
+        run_case(case, session, check)
+        for case in [select("unsets", "alter session unset lock_timeout"), select("next")]
+    ]
+    assert outcomes[0].leaks == (
+        "session parameter LOCK_TIMEOUT changed from '43200' (set in the session) to '43200' (inherited)",
+    )
+    assert outcomes[1].leaks == ()
+    assert "alter session set LOCK_TIMEOUT = 43200" in conn.statements
+    assert conn.parameters["LOCK_TIMEOUT"] == ("43200", "NUMBER", "SESSION")
+
+
+def test_the_runs_own_session_parameters_and_its_reset_are_no_leak():
+    # set at login, before the first snapshot; the reset after a case that could change the session sets autocommit
+    # again, in the session: neither is a change from inherited to set in the session
+    session, conn = stub_session()
+    check = LeakCheck(session)
+    outcomes = [run_case(case, session, check) for case in [select("sets", "set v = 1"), python_probe("p", "select 1")]]
+    assert [o.leaks for o in outcomes] == [("session variable V set to '1'",), ()]
+    assert {key for key, (_, _, level) in conn.parameters.items() if level == "SESSION"} == {
+        "AUTOCOMMIT",
+        "TIMEZONE",
+        "STATEMENT_TIMEOUT_IN_SECONDS",
+        "QUERY_TAG",
+    }
 
 
 def test_a_temporary_table_on_snowflake_is_found_by_show_tables_and_dropped():
@@ -750,7 +809,9 @@ def test_snowflake_leaks_and_how_they_are_undone():
         ),
         "session parameter TIMEZONE changed from 'UTC' to 'America/New_York'": "alter session set TIMEZONE = 'UTC'",
         # inherited before: unset, so it's inherited again
-        "session parameter LOCK_TIMEOUT changed from '43200' to '1'": "alter session unset LOCK_TIMEOUT",
+        "session parameter LOCK_TIMEOUT changed from '43200' (inherited) to '1' (set in the session)": (
+            "alter session unset LOCK_TIMEOUT"
+        ),
         # a type the runner can't write a literal of: reported, not undone
         "session parameter ODD changed from 'x' to 'y'": None,
         "session variable new_one set to 'x'": 'unset "new_one"',

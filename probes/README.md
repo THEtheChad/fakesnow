@@ -81,7 +81,8 @@ Each run creates `<database>.PROBES_<timestamp>_<random>`, and each case runs in
 `<run schema>_C<hash>` (see [Isolation](#isolation)). The run drops its schema at the end, also on exceptions and
 KeyboardInterrupt, using an independent cleanup connection, along with any schema or database whose name starts
 with the literal run schema prefix (that's how cases name anything they create outside their own schema). Snowflake sessions get `TIMEZONE = 'UTC'` (fakesnow's zone),
-`STATEMENT_TIMEOUT_IN_SECONDS = 60` and `QUERY_TAG = 'fakesnow-probes'`. fakesnow runs in a database of the
+`STATEMENT_TIMEOUT_IN_SECONDS = 60`, `QUERY_TAG = 'fakesnow-probes'` and `AUTOCOMMIT = TRUE`, all set in the session
+at login (so the runner turning autocommit back on after a case isn't a leak). fakesnow runs in a database of the
 same name, so names in outcomes line up. Database names must be simple unquoted SQL identifiers.
 Cleanup requires a working Snowflake connection; process termination or network/account outages can still
 require manual cleanup of the printed run schema.
@@ -157,7 +158,7 @@ runner undoes what it can, so later cases aren't affected, and reports it agains
 | schemas in the run's database (not other runs') | `SHOW TERSE SCHEMAS` | yes |
 | databases named after the run | `SHOW TERSE DATABASES LIKE` | yes, but fakesnow can't drop a database, so one left behind stays (reported as not undone) |
 | the main session's temporary tables | in the run's database, `SHOW TABLES` (`TERSE` lists a temporary table's kind as `TABLE`) | yes, also those whose schema was dropped (see below) |
-| session parameters, by value and type | `SHOW PARAMETERS IN SESSION`; one that was inherited (`level` not `SESSION`) is undone with `ALTER SESSION UNSET`, one set in the session with `ALTER SESSION SET` | no: fakesnow lists fixed values, and can't change any parameter but autocommit, which the runner resets |
+| session parameters, by value, type and whether set in the session (an inherited value set in the session, or one set in the session unset, is a leak even when the value stays the same) | `SHOW PARAMETERS IN SESSION`; one that was inherited (`level` not `SESSION`) is undone with `ALTER SESSION UNSET`, one set in the session with `ALTER SESSION SET` | no: fakesnow lists fixed values, and can't change any parameter but autocommit, which the runner resets |
 | session variables (`SET`), by value (NULL included) and type | `SHOW VARIABLES`, undone with `UNSET`, or `SET` to a literal of the same type (`CAST(NULL AS ...)` for NULL) | unchecked: fakesnow's `SHOW VARIABLES` lists none, even when some are set; the reports say so |
 | role and warehouse (as the connector reports them, no round trip) | yes | no: fakesnow has neither |
 | secondary roles | `CURRENT_SECONDARY_ROLES()` (a context function, no warehouse), only where parameters are listed; undone with `USE SECONDARY ROLES ALL` or `NONE` when that's what it was, else reported only | no: fakesnow has none |
