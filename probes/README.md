@@ -98,10 +98,11 @@ minutes against an X-Small warehouse, most of it round trips and metadata. Keep 
   Snowflake run (cases that aren't in the baseline report an error), and so do results you report.
 
 Isolation adds two statements per case on Snowflake (create and drop the case's schema), three SHOWs after a case
-that could change a schema, database or temporary table, and two more after one that could change the session; the
-runner also resets the session (rollback, autocommit) only after those. For the 384 cases as of this writing:
-768 statements for the schemas, 117 and 66 SHOWs after the 39 and 33 cases that need them, and 66 resets instead of
-768. See [Isolation](#isolation).
+that could change a schema, database or temporary table, and three more round trips (two SHOWs and
+`CURRENT_SECONDARY_ROLES()`) after one that could change the session; the runner also resets the session (rollback,
+autocommit) only after those, and again after a teardown that could change it. For the 384 cases as of this
+writing: 768 statements for the schemas, 117 and 99 after the 39 and 33 cases that need them, and 66 resets
+instead of 768 (1050 in all). See [Isolation](#isolation).
 
 ## Statuses
 
@@ -139,9 +140,13 @@ is in it when the case starts, `ctx.connect()` opens sessions in it, and outcome
 tables, views, stages, sequences and temporary tables never reach another case and need no teardown.
 
 What dropping the schema doesn't undo still needs a teardown: schemas and databases a case creates outside it
-(named starting with `{schema}`), and changes to the main session (`ALTER SESSION`, `USE ROLE`, `USE WAREHOUSE`).
-The runner resets the rest: after a case that could have changed the session (see below) it rolls back and turns
-autocommit on, and the next case's `CREATE SCHEMA` makes that case's schema current, whatever `USE` came before.
+(named starting with `{schema}`), and changes to the main session (`ALTER SESSION`, `SET`). No case may change the
+session's role, secondary roles or warehouse: a case with `USE ROLE`, `USE SECONDARY ROLES` or `USE WAREHOUSE` in
+its setup, statements or teardown doesn't load (a Python probe can't be checked that way; the leak check reports
+it). The runner resets the rest: after a case that could have changed the session (see below) it rolls back and
+turns autocommit on, before the teardown (so an aborted transaction can't stop it) and again after a teardown that
+could have changed the session, and the next case's `CREATE SCHEMA` makes that case's schema current, whatever
+`USE` came before.
 
 After each case's teardown and schema drop, a leak check compares a snapshot of shared state with the one from
 before the case (PolDet's approach, Gyori et al., ISSTA 2015). Anything new, gone or changed is a leak: the
@@ -151,10 +156,14 @@ runner undoes what it can, so later cases aren't affected, and reports it agains
 |---|---|---|
 | schemas in the run's database (not other runs') | `SHOW TERSE SCHEMAS` | yes |
 | databases named after the run | `SHOW TERSE DATABASES LIKE` | yes, but fakesnow can't drop a database, so one left behind stays (reported as not undone) |
-| the main session's temporary tables whose schema still exists | in the run's database, `SHOW TERSE TABLES` | yes |
-| session parameters | `SHOW PARAMETERS IN SESSION` | no: fakesnow lists fixed values, and can't change any parameter but autocommit, which the runner resets |
-| session variables (`SET`) | `SHOW VARIABLES`, undone with `UNSET` | unchecked: fakesnow's `SHOW VARIABLES` lists none, even when some are set; the reports say so |
+| the main session's temporary tables | in the run's database, `SHOW TABLES` (`TERSE` lists a temporary table's kind as `TABLE`) | yes, also those whose schema was dropped (see below) |
+| session parameters, by value and type | `SHOW PARAMETERS IN SESSION`; one that was inherited (`level` not `SESSION`) is undone with `ALTER SESSION UNSET`, one set in the session with `ALTER SESSION SET` | no: fakesnow lists fixed values, and can't change any parameter but autocommit, which the runner resets |
+| session variables (`SET`), by value (NULL included) and type | `SHOW VARIABLES`, undone with `UNSET`, or `SET` to a literal of the same type (`CAST(NULL AS ...)` for NULL) | unchecked: fakesnow's `SHOW VARIABLES` lists none, even when some are set; the reports say so |
 | role and warehouse (as the connector reports them, no round trip) | yes | no: fakesnow has neither |
+| secondary roles | `CURRENT_SECONDARY_ROLES()` (a context function, no warehouse), only where parameters are listed; undone with `USE SECONDARY ROLES ALL` or `NONE` when that's what it was, else reported only | no: fakesnow has none |
+
+A parameter or variable of a type the runner can't write a literal of (or a value unlike its type) is reported,
+not undone.
 
 Every SHOW on Snowflake is a metadata round trip (no warehouse needed), so there they run only after a case that
 could change what they list, judged from its statements with comments, strings and quoted names stripped:
@@ -165,7 +174,9 @@ could change what they list, judged from its statements with comments, strings a
   `TRUNCATE`, `LIST`/`LS`, `GET`, `PUT`, `REMOVE`/`RM`, `COMMENT`, `COMMIT`, `ROLLBACK` and `USE` change nothing
   listed: none can set a parameter or variable, start a transaction or turn autocommit off, or create or drop a
   schema, database or table outside the case's schema (`USE` changes the current schema, which the next case
-  resets, or the role and warehouse, which are read without a round trip);
+  resets). Except a `WITH` that mentions `PROCEDURE` or `CALL` (`WITH p AS PROCEDURE ... CALL p()` runs anything;
+  none of the 6 cases with a `WITH` does), and `USE ROLE`, `USE SECONDARY ROLES` and `USE WAREHOUSE`, which no
+  case may have but are judged to change anything anyway;
 - `CREATE`, `DROP` and `UNDROP` can't change the session either, and change what's listed only when they name a
   schema, database or temporary table (`SCHEMA`, `DATABASE`, `TEMPORARY`, `TEMP` or `VOLATILE`);
 - anything else could change anything: `ALTER` (`ALTER SESSION`, `USER` and `ACCOUNT` set parameters), `SET`,
@@ -176,8 +187,10 @@ does too: a later case could undo a leak left in place without the snapshot noti
 
 DuckDB keeps all temporary tables in one catalog, so fakesnow's outlive the schema they belong to (case
 `ddl.drop-schema-drops-temporary-table`). When a case's schema is dropped, the runner drops the fakesnow
-temporary tables whose schema is gone, as Snowflake would have, without reporting them; a temporary table whose
-schema still exists (the run's, say) is a leak, as on Snowflake.
+temporary tables created in it, as Snowflake would have, without reporting them (if that fails, the case's outcome
+says so, and the leak check reports and undoes them). Any other temporary table is the leak check's, whether its
+schema still exists (the run's, say: a leak on Snowflake too) or was dropped (a leak only on fakesnow, so a
+difference), and is left in place with `--keep-leaks`: the runner never drops what isn't the current case's.
 
 On Snowflake the runner only drops a leaked schema or temporary table that is named after the run (a temporary
 table, by its schema): the database may be shared, a schema with another name may not be the run's, and `DROP
@@ -361,7 +374,9 @@ Their files import `probes` like the ones here. Tables a query needs go in `setu
   so probes keeps a reference to it from import time. Every server in a process serves one fakesnow instance
   (`fakesnow.server.shared_fs`), so the fakesnow-server target swaps in a fresh instance of its own while it's
   open: nothing one run leaves there (fakesnow can't drop a database) reaches the next, a `--find-polluter` trial
-  say.
+  say. On the way out it closes and forgets that instance's server sessions (the server keeps any it isn't told to
+  delete), and no other. The swap isn't reentrant: two fakesnow-server targets open at once, other than nested,
+  would serve each other's logins. Targets run one at a time.
 - A recorded outcome is reused for a Python probe only while its module is unchanged, so marking a difference in a
   module with Python probes (editing `expected=`) needs those probes rerun against Snowflake.
 - Runs are sequential, one target after another, in one session per target (plus any a probe opens).
