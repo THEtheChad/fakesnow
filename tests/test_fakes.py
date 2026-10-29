@@ -7,6 +7,7 @@ import datetime
 import re
 import tempfile
 from decimal import Decimal
+from typing import cast
 
 import pytest
 import pytz
@@ -15,6 +16,7 @@ import snowflake.connector.cursor
 from snowflake.connector.errors import ProgrammingError
 
 import fakesnow
+from fakesnow.conn import FakeSnowflakeConnection
 from tests.utils import dindent, indent
 
 
@@ -699,6 +701,19 @@ def test_temporary_table_qualified_other_schema(cur: snowflake.connector.cursor.
     cur.execute("use schema db1.schema1")
     cur.execute("create temporary table table1 as select 'temporary' as x")
     assert cur.execute("select * from db1.schema2.table1").fetchall() == [("permanent",)]
+
+
+def test_temporary_table_owners(conn: snowflake.connector.SnowflakeConnection) -> None:
+    cur = conn.cursor()
+    cur.execute("create schema db1.schema2")
+    cur.execute("create temporary table db1.schema2.temp2 (x int)")
+    cur.execute('create temporary table db1.schema1."a""b" (x int)')
+    cur.execute("create temporary table gone (x int)")
+    cur.execute("drop table gone")
+    cur.execute("drop schema db1.schema2")
+    # kept for a table whose schema is gone; forgotten once the table is
+    owners = cast(FakeSnowflakeConnection, conn).temporary_tables.owners()
+    assert owners == {"TEMP2": ("DB1", "SCHEMA2"), 'a"b': ("DB1", "SCHEMA1")}
 
 
 @pytest.mark.parametrize("column", ["schema1.temp1.x", "db1.schema1.temp1.x"])
