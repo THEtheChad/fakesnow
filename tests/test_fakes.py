@@ -703,17 +703,29 @@ def test_temporary_table_qualified_other_schema(cur: snowflake.connector.cursor.
     assert cur.execute("select * from db1.schema2.table1").fetchall() == [("permanent",)]
 
 
-def test_temporary_table_owners(conn: snowflake.connector.SnowflakeConnection) -> None:
+def test_temporary_table_owners_keep_a_table_whose_schema_is_gone(
+    conn: snowflake.connector.SnowflakeConnection,
+) -> None:
     cur = conn.cursor()
     cur.execute("create schema db1.schema2")
     cur.execute("create temporary table db1.schema2.temp2 (x int)")
-    cur.execute('create temporary table db1.schema1."a""b" (x int)')
-    cur.execute("create temporary table gone (x int)")
-    cur.execute("drop table gone")
     cur.execute("drop schema db1.schema2")
-    # kept for a table whose schema is gone; forgotten once the table is
-    owners = cast(FakeSnowflakeConnection, conn).temporary_tables.owners()
-    assert owners == {"TEMP2": ("DB1", "SCHEMA2"), 'a"b': ("DB1", "SCHEMA1")}
+    assert cast(FakeSnowflakeConnection, conn).temporary_tables.owners() == {"TEMP2": ("DB1", "SCHEMA2")}
+
+
+def test_temporary_table_owners_forget_a_dropped_table(conn: snowflake.connector.SnowflakeConnection) -> None:
+    cur = conn.cursor()
+    cur.execute("create temporary table gone (x int)")
+    tables = cast(FakeSnowflakeConnection, conn).temporary_tables
+    assert tables.owners() == {"GONE": ("DB1", "SCHEMA1")}
+    cur.execute("drop table gone")
+    assert tables.owners() == {}
+
+
+def test_temporary_table_owners_name_a_quoted_table_as_written(conn: snowflake.connector.SnowflakeConnection) -> None:
+    cur = conn.cursor()
+    cur.execute('create temporary table db1.schema1."a""b" (x int)')
+    assert cast(FakeSnowflakeConnection, conn).temporary_tables.owners() == {'a"b': ("DB1", "SCHEMA1")}
 
 
 @pytest.mark.parametrize("column", ["schema1.temp1.x", "db1.schema1.temp1.x"])

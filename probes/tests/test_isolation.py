@@ -288,18 +288,22 @@ def test_a_temporary_table_replaced_under_the_same_name_is_the_replacing_cases_l
     assert c.steps[0].result.rows == ((2,),)
 
 
+@pytest.mark.parametrize(
+    "changes", ["insert into {shared} values (2)", "alter table {shared} add column y int"], ids=["insert", "alter"]
+)
 @pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
-def test_rows_added_to_a_temporary_table_left_in_place_dont_replace_it(target: str):
-    # its OID stays: what it holds isn't checked
+def test_a_temporary_table_changed_in_place_isnt_replaced(target: str, changes: str):
+    # its OID stays: what it holds, and its columns, aren't checked
     names = Names.new("PROBES")
     shared = f"{{database}}.{names.schema}.shared_tt"
     cases = [
         select("a", f"create temporary table {shared} as select 1 as x"),
-        select("b", [f"insert into {shared} values (2)", f"alter table {shared} add column y int"]),
+        select("b", changes.format(shared=shared)),
     ]
     with open_target(target, names) as session:
         check = LeakCheck(session, cleanup=False)
         outcomes = [run_case(case, session, check) for case in cases]
+    assert [step.error for step in outcomes[1].steps] == [None]
     assert outcomes[1].leaks == ()
 
 
