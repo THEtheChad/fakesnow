@@ -151,7 +151,9 @@ could have changed the session, and the next case's `CREATE SCHEMA` makes that c
 
 After each case's teardown and schema drop, a leak check compares a snapshot of shared state with the one from
 before the case (PolDet's approach, Gyori et al., ISSTA 2015). Anything new, gone or changed is a leak: the
-runner undoes what it can, so later cases aren't affected, and reports it against the case.
+runner undoes what it can, so later cases aren't affected, and reports it against the case. Something gone (a
+schema, database or temporary table that was there before the case, left by an earlier one) is reported but never
+undone: what it held went with it.
 
 | | Snowflake | fakesnow, fakesnow-server |
 |---|---|---|
@@ -183,6 +185,8 @@ could change what they list, judged from its statements with comments, strings a
 - anything else could change anything: `ALTER` (`ALTER SESSION`, `USER` and `ACCOUNT` set parameters), `SET`,
   `UNSET`, `BEGIN`, `CALL`, `EXECUTE IMMEDIATE`, `DECLARE`, `GRANT`, ...
 
+A `DROP TABLE` doesn't say whether its table is temporary, so while a temporary table the runner couldn't drop
+is still there, Snowflake's snapshot lists objects after every case, to see if one dropped it.
 fakesnow's snapshot is in-process (or local) and lists everything after every case. With `--keep-leaks`, Snowflake's
 does too: a later case could undo a leak left in place without the snapshot noticing.
 
