@@ -271,6 +271,39 @@ def test_a_temporary_table_another_schema_owned_is_never_dropped_by_a_later_case
 
 
 @pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
+def test_a_temporary_table_named_like_fakesnows_own_goes_with_the_case_schema(target: str):
+    # the reviewer's repro: fakesnow's own are known by OID, not by an _fs_ prefix a case can use too
+    fs_named = select("fs-named", 'create temporary table "_fs_user" (x int)')
+    with open_target(target, Names.new("PROBES")) as session:
+        check = LeakCheck(session)
+        outcomes = [run_case(fs_named, session, check) for _ in range(2)]
+        assert session.temporary_tables() == {}
+    assert [(o.leaks, o.notes, o.steps[0].error) for o in outcomes] == [((), (), None)] * 2
+
+
+@pytest.mark.parametrize("cleanup", [True, False], ids=["undone", "kept"])
+@pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
+def test_a_temporary_table_named_like_fakesnows_own_outside_the_case_schema_is_a_leak(target: str, cleanup: bool):
+    names = Names.new("PROBES")
+    fs_named = select("fs-named", f'create temporary table {{database}}.{names.schema}."_fs_user" (x int)')
+    with open_target(target, names) as session:
+        check = LeakCheck(session, cleanup=cleanup)
+        outcome = run_case(fs_named, session, check)
+        again = run_case(select("next", 'select * from "_fs_user"'), session, check)
+    assert outcome.leaks == ("temporary table {database}.{run_schema}._fs_user left behind",)
+    assert again.leaks == ()
+    assert (again.steps[0].error is None) == (not cleanup)
+
+
+def test_fakesnows_own_temporary_tables_arent_listed():
+    with open_target(FAKESNOW, Names.new("PROBES")) as session:
+        cur = session.conn.cursor()
+        cur.execute("select table_name from duckdb_tables() where temporary")
+        assert [row[0] for row in cur.fetchall()] == ["_fs_columns_ext"]
+        assert session.temporary_tables() == {}
+
+
+@pytest.mark.parametrize("target", [FAKESNOW, FAKESNOW_SERVER])
 def test_a_temporary_table_with_a_quote_in_its_name_is_dropped_with_the_case(target: str):
     quoting = select("quoting", 'create temporary table "a""b" (x int)')
     with open_target(target, Names.new("PROBES")) as session:

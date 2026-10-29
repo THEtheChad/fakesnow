@@ -191,6 +191,8 @@ temporary tables created in it, as Snowflake would have, without reporting them 
 says so, and the leak check reports and undoes them). Any other temporary table is the leak check's, whether its
 schema still exists (the run's, say: a leak on Snowflake too) or was dropped (a leak only on fakesnow, so a
 difference), and is left in place with `--keep-leaks`: the runner never drops what isn't the current case's.
+fakesnow's own temporary table (its column metadata) isn't listed: it's known by its OID, from before the run's
+first statement, not by its `_fs_` prefix, which a case's table can share.
 
 On Snowflake the runner only drops a leaked schema or temporary table that is named after the run (a temporary
 table, by its schema): the database may be shared, a schema with another name may not be the run's, and `DROP
