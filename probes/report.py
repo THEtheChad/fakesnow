@@ -10,7 +10,7 @@ from typing import Any
 
 from probes.compare import Status, Verdict, show, show_types
 from probes.model import UNFILED, Case
-from probes.outcome import ErrorInfo, Outcome, ResultSet, Step, decode, encode
+from probes.outcome import ErrorInfo, Fate, Leak, Outcome, ResultSet, Step, decode, encode
 from probes.runner import Report, TargetRun
 from probes.targets import SNOWFLAKE
 
@@ -53,13 +53,53 @@ def unfiled_differences(report: Report) -> list[tuple[Case, list[str], str]]:
     return found
 
 
+def describe_order(report: Report) -> str:
+    if report.seed is not None:
+        return f"in random order (--shuffle {report.seed})"
+    if report.order != [c.id for c in report.cases]:
+        return "in the order given (--order)"
+    return "in file order"
+
+
+def leaks(report: Report) -> list[tuple[Case, str, tuple[Leak, ...]]]:
+    """Each case and target (the reference too, when it ran now) whose outcome reports leaks."""
+    runs = [report.reference, *report.candidates]
+    return [
+        (case, run.target, outcome.leaks)
+        for case in report.cases
+        for run in runs
+        if (outcome := run.outcomes.get(case.id)) and outcome.leaks
+    ]
+
+
+def what_was_done(leaked: list[tuple[Case, str, tuple[Leak, ...]]]) -> list[str]:
+    """What the runner's undoing (or not) means for later cases, claiming no more than the leaks record."""
+    fates = {leak.fate for _, _, found in leaked for leak in found}
+    notes: list[str] = []
+    if fates == {Fate.UNDONE}:
+        notes.append("The runner undid every one and found each gone afterwards, so later cases ran without them.")
+    if Fate.KEPT in fates:
+        notes.append("Those kept were left in place (--keep-leaks), so the cases after them ran with them.")
+    if fates & {Fate.NOT_UNDONE, Fate.UNDO_FAILED, Fate.UNDO_DIDNT_TAKE}:
+        notes.append("Those the runner couldn't undo were still there for the cases after them.")
+    if None in fates:
+        notes.append("Those unmarked are a recorded run's, which didn't record what was done about them.")
+    return notes
+
+
+def _joined(found: tuple[Leak, ...]) -> str:
+    return "; ".join(map(str, found))
+
+
 def summary(report: Report) -> str:
-    lines = [f"{len(report.cases)} cases; reference {describe_target(report.reference)}"]
+    lines = [f"{len(report.cases)} cases {describe_order(report)}; reference {describe_target(report.reference)}"]
+    leaked = leaks(report)
     for run in report.candidates:
         c = counts(report, run.target)
         lines.append(
             f"  {describe_target(run)}: {c[Status.MATCH]} match, {c[Status.UNEXPECTED]} unexpected, "
-            f"{c[Status.EXPECTED]} expected, {c[Status.NOW_MATCHES]} now match, {c[Status.ERROR]} errors"
+            f"{c[Status.EXPECTED]} expected, {c[Status.NOW_MATCHES]} now match, {c[Status.ERROR]} errors, "
+            f"{sum(target == run.target for _, target, _ in leaked)} leaked"
         )
     if unfiled := unfiled_differences(report):
         lines.append(f"  {len(unfiled)} expected differences have no upstream issue yet (refs: unfiled)")
@@ -81,7 +121,11 @@ def summary(report: Report) -> str:
         for case, target, v in found:
             detail = v.differences[0].splitlines()[0] if v.differences else ", ".join(e for e in case.all_refs)
             lines.append(f"  {target:<16} {case.id}: {show(detail, 160)}")
-    lines += ["", comparison_scope(report)]
+    if leaked:
+        lines += ["", "Leaks (shared state a case left changed, each marked with what the runner did about it):"]
+        lines += [f"  {target:<16} {case.id}: {show(_joined(found), 160)}" for case, target, found in leaked]
+        lines += what_was_done(leaked)
+    lines += ["", comparison_scope(report), leak_scope(report)]
     return "\n".join(lines)
 
 
@@ -97,6 +141,26 @@ def comparison_scope(report: Report) -> str:
     )
 
 
+def leak_scope(report: Report) -> str:
+    """What the leak check covered on each target, and where it didn't run (a recorded run from before it)."""
+    parts: list[str] = []
+    any_unchecked = False
+    for run in [report.reference, *report.candidates]:
+        outcomes = [o for c in report.cases if (o := run.outcomes.get(c.id))]
+        unchecked = sum(o.leaks is None for o in outcomes)
+        any_unchecked |= unchecked > 0
+        scope = run.leak_check or "scope not recorded"
+        if unchecked == len(outcomes):
+            scope = "not checked (recorded before the leak check)"
+        elif unchecked:
+            scope += f"; not checked for {unchecked} cases (recorded before the leak check)"
+        parts.append(f"{run.target}{' (recorded)' if run.recorded else ''}: {scope}")
+    text = "Leak check: " + "; ".join(parts) + "."
+    if any_unchecked:
+        text += " A leak against an unchecked reference is an error until the reference is rerun."
+    return text
+
+
 # --- Markdown
 
 
@@ -105,11 +169,13 @@ def markdown(report: Report) -> str:
     out = [
         "# fakesnow probes",
         "",
-        f"Run {time.strftime('%Y-%m-%d %H:%M %Z')}: {len(report.cases)} cases, "
+        f"Run {time.strftime('%Y-%m-%d %H:%M %Z')}: {len(report.cases)} cases {describe_order(report)}, "
         f"reference {describe_target(report.reference)}, "
         f"compared with {', '.join(describe_target(r) for r in report.candidates)}.",
         "",
         comparison_scope(report),
+        "",
+        leak_scope(report),
         "",
         "| target | match | unexpected | expected | now matches | error |",
         "|---|---|---|---|---|---|",
@@ -119,6 +185,24 @@ def markdown(report: Report) -> str:
         out.append(f"| {target} | " + " | ".join(str(c[s]) for s in Status) + " |")
     if not report.with_expected:
         out += ["", "The reference isn't Snowflake, so expected differences don't apply."]
+
+    if leaked := leaks(report):
+        out += [
+            "",
+            "## Leaks",
+            "",
+            " ".join(
+                [
+                    "Shared state a case left changed after its teardown and its schema was dropped, each marked with "
+                    "what the runner did about it.",
+                    *what_was_done(leaked),
+                ]
+            ),
+            "",
+            "| case | target | leaks |",
+            "|---|---|---|",
+        ]
+        out += [f"| `{case.id}` | {target} | {_md_text(_joined(found))} |" for case, target, found in leaked]
 
     if unfiled := unfiled_differences(report):
         out += [
@@ -186,6 +270,8 @@ def outcome_rows(case: Case, outcomes: Sequence[Outcome | None]) -> list[tuple[s
         cells = [_md_step(o.steps[i], case) if o and i < len(o.steps) else "" for o in outcomes]
         rows.append((_md_code(sql), cells))
     rows += [("note", [_md_text(note) if o is p else "" for p in outcomes]) for o in present for note in o.notes]
+    if any(o.leaks for o in present):
+        rows.append(("leaks", [_md_text(_joined(o.leaks)) if o and o.leaks else "" for o in outcomes]))
     return rows
 
 
@@ -233,10 +319,12 @@ def to_json(report: Report) -> dict[str, Any]:
         "format": JSON_FORMAT,
         "names": {"database": report.names.database, "schema": report.names.schema},
         "reference": report.reference.target,
+        "order": {"shuffle": report.seed, "cases": report.order},
         "runs": {
             run.target: {
                 "info": run.info,
                 "recorded": run.recorded,
+                "leak check": run.leak_check,
                 "outcomes": {
                     case_id: {"fingerprint": run.fingerprints.get(case_id), "outcome": encode(outcome)}
                     for case_id, outcome in run.outcomes.items()
@@ -287,6 +375,7 @@ def load_run(path: Path, target: str = SNOWFLAKE) -> TargetRun:
         outcomes={k: decode(v["outcome"]) for k, v in run["outcomes"].items()},
         fingerprints={k: v["fingerprint"] for k, v in run["outcomes"].items()},
         recorded=True,
+        leak_check=run.get("leak check"),
     )
 
 

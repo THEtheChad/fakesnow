@@ -1,11 +1,13 @@
 """Where cases run: real Snowflake, fakesnow in-process (fakesnow.patch) or fakesnow's server.
 
-Each target opens a session in the run's own schema, created at the start and dropped at the end.
+Each target opens a session in the run's own schema, created at the start and dropped at the end, along with
+every schema or database named after it: each case's own schema, and anything a case creates outside it.
 """
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.metadata
 import logging
 import os
@@ -18,12 +20,17 @@ from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import snowflake.connector
 from snowflake.connector import SnowflakeConnection
 
 import fakesnow
+from fakesnow.instance import FakeSnow
+from probes.outcome import ErrorInfo
+
+if TYPE_CHECKING:
+    from fakesnow.conn import FakeSnowflakeConnection
 
 # fakesnow.server() imports the fakesnow.server module, which then shadows the function on the package, so a
 # second call in the same process fails: keep the function from before that happens
@@ -49,8 +56,12 @@ _ENV_PARAMS = {
     "HOST": "host",
 }
 
-# applied to every Snowflake session the run opens
+# applied to every Snowflake session the run opens, so each is set in the session (SHOW PARAMETERS' level SESSION)
+# before the leak check's first snapshot
 SNOWFLAKE_SESSION_PARAMETERS: dict[str, str | int | bool] = {
+    # the runner turns it back on after a case that could have turned it off (ALTER SESSION SET): set from the start,
+    # that isn't a change from an inherited value to one set in the session
+    "AUTOCOMMIT": True,
     "TIMEZONE": "UTC",
     # a probe is a handful of rows: anything slower is a mistake, so stop it before it costs anything
     "STATEMENT_TIMEOUT_IN_SECONDS": 60,
@@ -64,28 +75,57 @@ class TargetError(RuntimeError):
 
 @dataclass(frozen=True)
 class Names:
-    """The run's database and unique schema, and how cases refer to them."""
+    """The run's database and unique schema, or a case's own schema within the run, and how cases refer to them."""
 
     database: str
     schema: str
+    run_schema: str = ""
+    """For a case's names: the run's schema, which the case's is named after. Empty for the run's own names."""
 
     @classmethod
     def new(cls, database: str) -> Names:
         return cls(database, f"PROBES_{time.strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(8).upper()}")
 
     def __post_init__(self) -> None:
-        for name in (self.database, self.schema):
+        for name in filter(None, (self.database, self.schema, self.run_schema)):
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", name):
                 raise TargetError("probe database/schema names must be simple unquoted SQL identifiers")
-        object.__setattr__(self, "database", self.database.upper())
-        object.__setattr__(self, "schema", self.schema.upper())
+        for name in ("database", "schema", "run_schema"):
+            object.__setattr__(self, name, getattr(self, name).upper())
+
+    @property
+    def run(self) -> str:
+        """The run's schema: every schema or database the run creates is named starting with it."""
+        return self.run_schema or self.schema
+
+    def case(self, case_id: str) -> Names:
+        """A case's names: its own schema, named after the run's so cleanup finds it.
+
+        The suffix comes from the case's id, so the name is the same in every order, selection and run, and as long
+        as any other case's: a case that shows its schema's name (say, its length) can't depend on which cases ran.
+        """
+        return Names(self.database, f"{self.run}_C{hashlib.sha256(case_id.encode()).hexdigest()[:8].upper()}", self.run)
 
     def render(self, sql: str) -> str:
         return sql.replace("{database}", self.database).replace("{schema}", self.schema)
 
     @property
     def placeholders(self) -> dict[str, str]:
-        return {self.schema: "{schema}", self.database: "{database}"}
+        # a case's schema starts with the run's: the scrubber tries the longer name first
+        run = {self.run_schema: "{run_schema}"} if self.run_schema else {}
+        return {self.schema: "{schema}", self.database: "{database}", **run}
+
+    def is_other_run(self, name: str) -> bool:
+        """Whether a schema or database is named like another run's: concurrent runs may share a database."""
+        return bool(_RUN_NAME.match(name)) and not name.upper().startswith(self.run)
+
+
+_RUN_NAME = re.compile(r"PROBES_\d{8}_\d{6}_[0-9A-F]{16}", re.IGNORECASE)
+
+
+def quoted(name: str) -> str:
+    """A name as a quoted identifier: every identifier the runner generates from a name it found goes through this."""
+    return '"' + name.replace('"', '""') + '"'
 
 
 @dataclass(frozen=True)
@@ -122,27 +162,106 @@ class SnowflakeConfig:
 
 @dataclass
 class Session:
-    """An open target: its main connection, and a way to open more sessions in the run's schema."""
+    """An open target: its main connection, and a way to open more sessions in the run's database.
+
+    Each case runs in a schema of its own (enter_case and leave_case), so what one case creates in its schema can't
+    affect another.
+    """
 
     target: str
-    names: Names
+    run_names: Names
     conn: SnowflakeConnection
-    open_connection: Callable[[], SnowflakeConnection]
+    open_connection: Callable[[str], SnowflakeConnection]
+    """Opens another session in the given schema of the run's database."""
     info: dict[str, str]
+    fakesnow_session: Callable[[], FakeSnowflakeConnection] | None = None
+    """fakesnow's own object for the main session, for what SQL can't tell (see temporary_tables)."""
+    names: Names = field(init=False)
+    """The current case's names, whose {schema} is the case's own schema; the run's between cases."""
+    _fakesnow_own: frozenset[int] = field(init=False, default=frozenset())
+    """fakesnow only: the OIDs of its own temporary tables, which it creates as the session opens."""
+
+    def __post_init__(self) -> None:
+        self.names = self.run_names
+        if self.fakesnow_session:
+            self._fakesnow_own = frozenset(self._temporary_oids().values())
 
     @property
     def is_snowflake(self) -> bool:
         return self.target == SNOWFLAKE
 
     def connect(self) -> SnowflakeConnection:
-        return self.open_connection()
+        return self.open_connection(self.names.schema)
+
+    def enter_case(self, case_id: str) -> Names:
+        """Create the case's schema, which makes it the main session's current schema."""
+        names = self.run_names.case(case_id)
+        self.conn.cursor().execute(f"create schema {names.database}.{names.schema}")
+        self.names = names
+        self.restore()
+        return names
+
+    def leave_case(self) -> str | None:
+        """Drop the case's schema and everything in it; why that failed, if it did (the leak check then reports it).
+
+        On fakesnow, also drop the temporary tables created in the case's schema, as dropping it does on Snowflake:
+        fakesnow keeps them (case ddl.drop-schema-drops-temporary-table), and they'd shadow later cases' tables.
+        Only those: any other temporary table, its schema dropped or not, is the leak check's to report (and, unless
+        leaks are kept, undo).
+        """
+        names, self.names = self.names, self.run_names
+        if names is self.run_names:
+            return None
+        try:
+            self.conn.cursor().execute(f"drop schema if exists {names.database}.{names.schema} cascade")
+        except snowflake.connector.errors.Error as e:
+            return f"dropping the case's schema failed: {ErrorInfo.from_exception(e)}"
+        if not self.fakesnow_session:
+            return None
+        failed: list[str] = []
+        for name, owner in self.temporary_tables().items():
+            if owner == (names.database, names.schema):
+                try:
+                    self.conn.cursor().execute(f"drop table if exists temp.main.{quoted(name)}")
+                except Exception as e:  # in-process, fakesnow can raise more than the connector's errors
+                    failed.append(f"{name}: {ErrorInfo.from_exception(e)}")
+        return f"dropping the case's temporary tables failed: {'; '.join(failed)}" if failed else None
+
+    def temporary_tables(self) -> dict[str, tuple[str, str] | None]:
+        """fakesnow only: the main session's temporary tables, each with the database and schema it was created in,
+        even if that's since been dropped; None if fakesnow didn't record it.
+
+        DuckDB keeps every temporary table in one catalog (temp.main), so only fakesnow knows each one's schema.
+        Not fakesnow's own (its column metadata, temp.main._fs_columns_ext): those it had before the run's first
+        statement, known by OID, which DuckDB never reuses, rather than by name, which a case can share.
+        """
+        return {name: owner for name, (owner, _) in self.temporary_table_oids().items()}
+
+    def temporary_table_oids(self) -> dict[str, tuple[tuple[str, str] | None, int]]:
+        """fakesnow only: temporary_tables, each with its OID too, which a table replaced under the same name doesn't
+        keep (DuckDB gives the new one its own), and an INSERT or ALTER does."""
+        assert self.fakesnow_session, "Snowflake lists temporary tables with SHOW TABLES"
+        owners = self.fakesnow_session().temporary_tables.owners()
+        oids = {name: oid for name, oid in self._temporary_oids().items() if oid not in self._fakesnow_own}
+        return {name: (_owner(owners.get(name)), oid) for name, oid in oids.items()}
+
+    def _temporary_oids(self) -> dict[str, int]:
+        """fakesnow only: the main session's temporary tables' OIDs, by name (unique among them)."""
+        cur = self.conn.cursor()
+        # DuckDB's catalog function, which fakesnow passes through
+        cur.execute("select table_name, table_oid from duckdb_tables() where temporary")
+        return {str(name): int(oid) for name, oid in cur.fetchall()}
 
     def restore(self) -> None:
-        """Put the main session back in the run's schema, if a case moved it."""
+        """Put the main session back in the current case's schema, if the connector reports it elsewhere."""
         if (self.conn.database or "").upper() != self.names.database.upper() or (
             self.conn.schema or ""
         ).upper() != self.names.schema.upper():
             self.conn.cursor().execute(f"use schema {self.names.database}.{self.names.schema}")
+
+
+def _owner(owner: tuple[str | None, str | None] | None) -> tuple[str, str] | None:
+    return (str(owner[0]), str(owner[1])) if owner else None
 
 
 @contextmanager
@@ -191,7 +310,7 @@ def _snowflake(names: Names, config: SnowflakeConfig) -> Iterator[Session]:
             SNOWFLAKE,
             names,
             conn,
-            lambda: connect(names.schema),
+            connect,
             {"version": version, "connector": snowflake.connector.__version__},
         )
     finally:
@@ -209,10 +328,10 @@ def _snowflake(names: Names, config: SnowflakeConfig) -> Iterator[Session]:
 
 
 def _drop_run_objects(conn: SnowflakeConnection, names: Names) -> None:
-    """Drop the run's schema, and any schema or database a case created named after it."""
+    """Drop the run's schema, and any schema (or database) a case created named after it."""
     cur = conn.cursor()
     statements = [f"drop schema if exists {names.database}.{names.schema} cascade"]
-    for kind, scope in (("schemas", f" in database {names.database}"), ("databases", "")):
+    for kind, scope in [("schemas", f" in database {names.database}"), ("databases", "")]:
         try:
             cur.execute(f"show {kind} like '{names.schema}%'{scope}")
             found = [r[1] for r in cur.fetchall()]
@@ -224,8 +343,7 @@ def _drop_run_objects(conn: SnowflakeConnection, names: Names) -> None:
             # different run's objects merely because they match that SQL pattern.
             if not str(name).startswith(names.schema):
                 continue
-            quoted = '"' + str(name).replace('"', '""') + '"'
-            where = f"{names.database}.{quoted}" if kind == "schemas" else quoted
+            where = f"{names.database}.{quoted(str(name))}" if kind == "schemas" else quoted(str(name))
             statements.append(f"drop {kind[:-1]} if exists {where} cascade")
     for sql in dict.fromkeys(statements):
         try:
@@ -240,12 +358,14 @@ def _fakesnow(names: Names) -> Iterator[Session]:
         conn = snowflake.connector.connect(database=names.database)
         try:
             conn.cursor().execute(f"create schema {names.database}.{names.schema}")
+            fake: Any = conn  # fakesnow.patch makes connect return fakesnow's connection
             yield Session(
                 FAKESNOW,
                 names,
                 conn,
-                lambda: snowflake.connector.connect(database=names.database, schema=names.schema),
+                lambda schema: snowflake.connector.connect(database=names.database, schema=schema),
                 fakesnow_info(),
+                lambda: fake,
             )
         finally:
             conn.close()
@@ -256,7 +376,11 @@ def _fakesnow_server(names: Names) -> Iterator[Session]:
     if not callable(_start_server):
         raise TargetError("fakesnow.server was imported as a module before probes: start probes first")
     # uvicorn configures its logging as it starts, so it's quietened after (only its start-up lines get through)
-    with _start_server() as server_kwargs, _quiet("fakesnow.server", "uvicorn", "uvicorn.access", "uvicorn.error"):
+    with (
+        _start_server() as server_kwargs,
+        _fresh_server_instance() as server,
+        _quiet("fakesnow.server", "uvicorn", "uvicorn.access", "uvicorn.error"),
+    ):
 
         def connect(schema: str | None = None) -> SnowflakeConnection:
             # the connector changes session_parameters in place, so each connection gets its own copy
@@ -268,9 +392,39 @@ def _fakesnow_server(names: Names) -> Iterator[Session]:
         conn = connect()
         try:
             conn.cursor().execute(f"create schema {names.database}.{names.schema}")
-            yield Session(FAKESNOW_SERVER, names, conn, lambda: connect(names.schema), fakesnow_info())
+            token = conn.rest.token if conn.rest else None
+            yield Session(FAKESNOW_SERVER, names, conn, connect, fakesnow_info(), lambda: server.sessions[str(token)])
         finally:
             conn.close()
+
+
+@contextmanager
+def _fresh_server_instance() -> Iterator[Any]:
+    """Serve logins from a fakesnow instance of the target's own while it's open, and yield the server module.
+
+    Every server in a process serves the same instance (fakesnow.server.shared_fs), so what one run leaves there,
+    such as a database (fakesnow can't drop one), would reach the next: a --find-polluter trial, say. On the way out
+    the instance's sessions are closed and forgotten (the server keeps every session it hasn't been told to delete,
+    and each one keeps its instance's result cache), and no other.
+
+    Not reentrant: shared_fs is one module global, so while two of these overlap (other than nested), logins go to
+    whichever swapped in last, and the first to leave puts back an instance the other then serves. Targets run one
+    at a time.
+    """
+    server: Any = sys.modules["fakesnow.server"]
+    instance = FakeSnow()
+    shared, server.shared_fs = server.shared_fs, instance
+    try:
+        yield server
+    finally:
+        server.shared_fs = shared
+        sessions: dict[str, Any] = server.sessions
+        for token, conn in list(sessions.items()):
+            if conn.results_cache is instance.results_cache:
+                del sessions[token]
+                conn.close()
+        instance.results_cache.clear()
+        instance.duck_conn.close()
 
 
 @contextmanager

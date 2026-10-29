@@ -11,6 +11,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
+from probes.isolation import changes_context
 from probes.model import UNFILED, Case
 
 DEFAULT_CASES = Path(__file__).parent / "cases"
@@ -47,6 +48,13 @@ def load_file(path: Path) -> list[Case]:
     cases = getattr(module, "CASES", None)
     if not isinstance(cases, list | tuple) or not all(isinstance(c, Case) for c in cases):
         raise LoadError(f"{path}: should define CASES, a list of probes.Case")
+    for case in cases:
+        for sql in (*case.setup, *case.statements, *case.teardown):
+            if changes_context(sql):
+                raise LoadError(
+                    f"{path}: {case.id}: {sql!r} changes the session's role, secondary roles or warehouse, "
+                    "which no case may: the run keeps the role, secondary roles and warehouse it connected with"
+                )
     pins_path = path.parent / "_expected.json"
     try:
         pins = json.loads(pins_path.read_text()) if pins_path.exists() else {}
