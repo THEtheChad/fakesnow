@@ -119,6 +119,11 @@ class Names:
 _RUN_NAME = re.compile(r"PROBES_\d{8}_\d{6}_[0-9A-F]{16}", re.IGNORECASE)
 
 
+def quoted(name: str) -> str:
+    """A name as a quoted identifier: every identifier the runner generates from a name it found goes through this."""
+    return '"' + name.replace('"', '""') + '"'
+
+
 @dataclass(frozen=True)
 class SnowflakeConfig:
     """How to connect to Snowflake, read from PROBES_SNOWFLAKE_* environment variables.
@@ -191,8 +196,10 @@ class Session:
     def leave_case(self) -> str | None:
         """Drop the case's schema and everything in it; why that failed, if it did (the leak check then reports it).
 
-        On fakesnow, also drop the temporary tables whose schema is gone, as dropping it does on Snowflake: fakesnow
-        keeps them (case ddl.drop-schema-drops-temporary-table), and they'd shadow later cases' tables.
+        On fakesnow, also drop the temporary tables created in the case's schema, as dropping it does on Snowflake:
+        fakesnow keeps them (case ddl.drop-schema-drops-temporary-table), and they'd shadow later cases' tables.
+        Only those: any other temporary table, its schema dropped or not, is the leak check's to report (and, unless
+        leaks are kept, undo).
         """
         names, self.names = self.names, self.run_names
         if names is self.run_names:
@@ -201,28 +208,30 @@ class Session:
             self.conn.cursor().execute(f"drop schema if exists {names.database}.{names.schema} cascade")
         except snowflake.connector.errors.Error as e:
             return f"dropping the case's schema failed: {ErrorInfo.from_exception(e)}"
-        if self.fakesnow_session:
-            for name, owner in self.temporary_tables().items():
-                if owner is None:
-                    self.conn.cursor().execute(f'drop table if exists temp.main."{name}"')
-        return None
+        if not self.fakesnow_session:
+            return None
+        failed: list[str] = []
+        for name, owner in self.temporary_tables().items():
+            if owner == (names.database, names.schema):
+                try:
+                    self.conn.cursor().execute(f"drop table if exists temp.main.{quoted(name)}")
+                except Exception as e:  # in-process, fakesnow can raise more than the connector's errors
+                    failed.append(f"{name}: {ErrorInfo.from_exception(e)}")
+        return f"dropping the case's temporary tables failed: {'; '.join(failed)}" if failed else None
 
     def temporary_tables(self) -> dict[str, tuple[str, str] | None]:
-        """fakesnow only: the main session's temporary tables, each with its schema, None if that schema is gone.
+        """fakesnow only: the main session's temporary tables, each with the database and schema it was created in,
+        even if that's since been dropped; None if fakesnow didn't record it.
 
         DuckDB keeps every temporary table in one catalog (temp.main), so only fakesnow knows each one's schema.
         """
         assert self.fakesnow_session, "Snowflake lists temporary tables with SHOW TABLES"
-        registry = self.fakesnow_session().temporary_tables
+        owners = self.fakesnow_session().temporary_tables.owners()
         cur = self.conn.cursor()
-        # DuckDB's catalog functions, which fakesnow passes through; _fs_ tables are fakesnow's own
+        # DuckDB's catalog function, which fakesnow passes through; _fs_ tables are fakesnow's own
         cur.execute("select table_name from duckdb_tables() where temporary and not starts_with(table_name, '_fs_')")
         tables = [str(row[0]) for row in cur.fetchall()]
-        cur.execute("select database_name, schema_name from duckdb_schemas()")
-        schemas = [(str(database), str(schema)) for database, schema in cur.fetchall()]
-        return {
-            table: next(((d, s) for d, s in schemas if registry.oid(d, s, table) is not None), None) for table in tables
-        }
+        return {table: _owner(owners.get(table)) for table in tables}
 
     def restore(self) -> None:
         """Put the main session back in the current case's schema, if the connector reports it elsewhere."""
@@ -230,6 +239,10 @@ class Session:
             self.conn.schema or ""
         ).upper() != self.names.schema.upper():
             self.conn.cursor().execute(f"use schema {self.names.database}.{self.names.schema}")
+
+
+def _owner(owner: tuple[str | None, str | None] | None) -> tuple[str, str] | None:
+    return (str(owner[0]), str(owner[1])) if owner else None
 
 
 @contextmanager
@@ -311,8 +324,7 @@ def _drop_run_objects(conn: SnowflakeConnection, names: Names) -> None:
             # different run's objects merely because they match that SQL pattern.
             if not str(name).startswith(names.schema):
                 continue
-            quoted = '"' + str(name).replace('"', '""') + '"'
-            where = f"{names.database}.{quoted}" if kind == "schemas" else quoted
+            where = f"{names.database}.{quoted(str(name))}" if kind == "schemas" else quoted(str(name))
             statements.append(f"drop {kind[:-1]} if exists {where} cascade")
     for sql in dict.fromkeys(statements):
         try:
@@ -372,14 +384,27 @@ def _fresh_server_instance() -> Iterator[Any]:
     """Serve logins from a fakesnow instance of the target's own while it's open, and yield the server module.
 
     Every server in a process serves the same instance (fakesnow.server.shared_fs), so what one run leaves there,
-    such as a database (fakesnow can't drop one), would reach the next: a --find-polluter trial, say.
+    such as a database (fakesnow can't drop one), would reach the next: a --find-polluter trial, say. On the way out
+    the instance's sessions are closed and forgotten (the server keeps every session it hasn't been told to delete,
+    and each one keeps its instance's result cache), and no other.
+
+    Not reentrant: shared_fs is one module global, so while two of these overlap (other than nested), logins go to
+    whichever swapped in last, and the first to leave puts back an instance the other then serves. Targets run one
+    at a time.
     """
     server: Any = sys.modules["fakesnow.server"]
-    shared, server.shared_fs = server.shared_fs, FakeSnow()
+    instance = FakeSnow()
+    shared, server.shared_fs = server.shared_fs, instance
     try:
         yield server
     finally:
-        instance, server.shared_fs = server.shared_fs, shared
+        server.shared_fs = shared
+        sessions: dict[str, Any] = server.sessions
+        for token, conn in list(sessions.items()):
+            if conn.results_cache is instance.results_cache:
+                del sessions[token]
+                conn.close()
+        instance.results_cache.clear()
         instance.duck_conn.close()
 
 
