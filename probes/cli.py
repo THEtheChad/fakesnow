@@ -12,9 +12,11 @@ from pathlib import Path
 
 import snowflake.connector.errors
 
+from probes.compare import show
 from probes.loader import DEFAULT_CASES, LoadError, load_cases, select
 from probes.model import Case
 from probes.outcome import redact
+from probes.polluter import find_polluters
 from probes.report import load_run, markdown, recorded_database, summary, write_json
 from probes.runner import Report, TargetRun, compare_runs, run_target, shuffled
 from probes.targets import FAKESNOW, FAKESNOW_SERVER, SNOWFLAKE, TARGETS, Names, SnowflakeConfig, TargetError
@@ -69,6 +71,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         metavar="ID,ID,...",
         help="run exactly these cases, in this order",
     )
+    parser.add_argument(
+        "--keep-leaks",
+        action="store_true",
+        help="report what the leak check finds but leave it in place, to see what it affects (e.g. --find-polluter)",
+    )
+    parser.add_argument(
+        "--find-polluter",
+        metavar="CASE_ID",
+        help="find the cases that ran before CASE_ID (file order, --shuffle or --order) and change its outcome, "
+        f"on one fakesnow --target (default {FAKESNOW})",
+    )
     parser.add_argument("--list", action="store_true", help="list the selected cases and exit")
     parser.add_argument("-v", "--verbose", action="store_true", help="print each case as it runs")
     return parser.parse_args(argv)
@@ -118,13 +131,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not cases:
         print("error: no cases selected", file=sys.stderr)
         return 2
+    if args.find_polluter:
+        return find_polluter(args, order)
 
     targets: list[str] = [t for t in (args.targets or [FAKESNOW, FAKESNOW_SERVER]) if t != args.reference]
     if not targets:
         print("error: no targets to compare with the reference", file=sys.stderr)
         return 2
     try:
-        report = run(cases, order, args.reference, targets, args.baseline, args.verbose, args.shuffle)
+        report = run(cases, order, args.reference, targets, args.baseline, args.verbose, args.shuffle, args.keep_leaks)
     except (TargetError, ValueError, OSError, snowflake.connector.errors.Error) as e:
         print(f"error: {redact(str(e))}", file=sys.stderr)
         return 2
@@ -147,6 +162,7 @@ def run(
     baseline: Path | None,
     verbose: bool,
     seed: int | None = None,
+    keep_leaks: bool = False,
 ) -> Report:
     needs_snowflake = (reference == SNOWFLAKE and not baseline) or SNOWFLAKE in targets
     config = SnowflakeConfig.from_env() if needs_snowflake else None
@@ -165,10 +181,51 @@ def run(
     def timed(target: str) -> TargetRun:
         start = time.monotonic()
         print(f"{target}: running {len(order)} cases in {names.database}.{names.schema}", file=sys.stderr)
-        result = run_target(target, order, names, config, progress)
+        result = run_target(target, order, names, config, progress, cleanup=not keep_leaks)
         print(f"{target}: done in {time.monotonic() - start:.0f}s", file=sys.stderr)
         return result
 
     reference_run = load_run(baseline, reference) if baseline else timed(reference)
     candidates = [timed(t) for t in targets]
     return compare_runs(cases, reference_run, candidates, names, seed, [c.id for c in order])
+
+
+def find_polluter(args: argparse.Namespace, order: list[Case]) -> int:
+    """--find-polluter: exit 0 when polluters were found, 1 when nothing before the case changes it."""
+    targets = args.targets or [FAKESNOW]
+    if len(targets) != 1 or targets[0] == SNOWFLAKE:
+        print(f"error: --find-polluter needs one fakesnow --target: {FAKESNOW} or {FAKESNOW_SERVER}", file=sys.stderr)
+        return 2
+    ids = [c.id for c in order]
+    if args.find_polluter not in ids:
+        print(f"error: {args.find_polluter} isn't among the selected cases", file=sys.stderr)
+        return 2
+    target, index = targets[0], ids.index(args.find_polluter)
+    victim, before = order[index], order[:index]
+    how = f"--shuffle {args.shuffle}" if args.shuffle is not None else "--order" if args.order else "file order"
+    print(f"{victim.id} on {target}, after the {len(before)} cases before it ({how})", file=sys.stderr)
+
+    def log(line: str) -> None:
+        print(line, file=sys.stderr)
+
+    try:
+        search = find_polluters(victim, before, target, DEFAULT_DATABASE, cleanup=not args.keep_leaks, log=log)
+    except (TargetError, snowflake.connector.errors.Error) as e:
+        print(f"error: {redact(str(e))}", file=sys.stderr)
+        return 2
+    if not search.changes:
+        print(f"{victim.id}: the cases before it don't change its outcome ({search.trials} trials)")
+        if not args.keep_leaks:
+            print("  with --keep-leaks, polluters the leak check already reports and undoes are found too")
+        return 1
+    print(f"{victim.id}: after the {len(before)} cases before it, its outcome changes:")
+    print("\n".join(f"  {show(line, 300)}" for line in search.changes))
+    print(f"polluter{'s' if len(search.polluters) > 1 else ''} ({search.trials} trials):")
+    print("\n".join(f"  {case.id}" for case in search.polluters))
+    print("after just those:")
+    print("\n".join(f"  {show(line, 300)}" for line in search.after_polluters))
+    repro = ["python -m probes", *map(str, args.paths), "--find-polluter", victim.id]
+    repro += ["--order", ",".join(c.id for c in [*search.polluters, victim]), "--target", target]
+    repro += ["--keep-leaks"] if args.keep_leaks else []
+    print(f"reproduce: {' '.join(repro)}")
+    return 0

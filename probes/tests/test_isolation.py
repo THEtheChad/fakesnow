@@ -1,4 +1,4 @@
-"""Isolation: each case's own schema, the leak check, and shuffled order. No Snowflake."""
+"""Isolation: each case's own schema, the leak check, shuffled order, and finding polluters. No Snowflake."""
 
 import json
 from pathlib import Path
@@ -13,9 +13,10 @@ from probes.isolation import LeakCheck, State, checks_parameters
 from probes.loader import load_cases
 from probes.model import Case, Expected
 from probes.outcome import Column, Outcome, ResultSet, Step, decode, encode, scrubber
+from probes.polluter import ddmin, find_polluters
 from probes.report import markdown, summary, to_json
 from probes.runner import compare_runs, run_case, run_target, shuffled
-from probes.targets import FAKESNOW, FAKESNOW_SERVER, Names, open_target
+from probes.targets import FAKESNOW, FAKESNOW_SERVER, SNOWFLAKE, Names, TargetError, open_target
 
 CASES = """
 from probes import Case
@@ -46,6 +47,25 @@ CASES = [
     Case(id="leak.schema", description="leaves a schema behind", sql="create schema {database}.{schema}_L"),
     Case(id="leak.temporary", description="leaves a temporary table", sql="create temporary table leak_tt (x int)"),
     Case(id="leak.after", description="the same temporary table again", sql="create temporary table leak_tt (x int)"),
+]
+"""
+
+POLLUTERS = """
+from probes import Case
+
+CASES = [
+    Case(id="p.a", description="unrelated", sql="select 1"),
+    Case(id="p.x", description="sets a session variable", sql="set p_x = 1"),
+    Case(id="p.b", description="unrelated", sql="create table p_t (x int)"),
+    Case(id="p.y", description="sets another", sql="set p_y = 2"),
+    Case(id="p.c", description="unrelated", sql="select 2"),
+    Case(id="p.schema", description="leaves a schema behind", sql="create schema {database}.{schema}_P"),
+    Case(id="p.victim", description="reads both variables", sql="select $p_x + $p_y"),
+    Case(
+        id="p.lister",
+        description="counts schemas left behind",
+        sql="select count(*) from information_schema.schemata where endswith(schema_name, '_P')",
+    ),
 ]
 """
 
@@ -92,6 +112,13 @@ def test_each_case_runs_in_its_own_schema(tmp_path: Path, target: str):
     session = run.outcomes["iso.session"].value
     assert isinstance(session, ResultSet)
     assert session.rows == (("{schema}",),)
+
+
+def test_server_runs_in_one_process_dont_see_each_others_schemas():
+    # every fakesnow server in a process shares one instance
+    case = Case(id="count", description="d", sql="select count(*) from information_schema.schemata")
+    first = run_target(FAKESNOW_SERVER, [case], Names.new("PROBES")).outcomes["count"]
+    assert run_target(FAKESNOW_SERVER, [case], Names.new("PROBES")).outcomes["count"] == first
 
 
 # --- the leak check
@@ -264,3 +291,43 @@ def test_order_runs_exactly_the_cases_given(tmp_path: Path):
     assert main([*base, "--order", "iso.read,iso.create"]) == 0
     assert main([*base, "--order", "iso.nope"]) == 2
     assert main([*base, "--order", "iso.read", "--shuffle", "1"]) == 2
+
+
+# --- finding polluters
+
+
+def test_ddmin_finds_a_smallest_set_in_order():
+    items = list(range(40))
+    assert ddmin(items, lambda s: 17 in s) == [17]
+    assert ddmin(items, lambda s: 3 in s and 31 in s) == [3, 31]
+    assert ddmin(items, lambda s: len({5, 6, 7} & set(s)) == 3) == [5, 6, 7]
+
+
+def test_find_polluters_finds_a_planted_pair(tmp_path: Path):
+    cases = load_cases([case_dir(tmp_path, "p", POLLUTERS)])
+    ids = [c.id for c in cases]
+    victim = cases[ids.index("p.victim")]
+    search = find_polluters(victim, cases[: ids.index("p.victim")], FAKESNOW, "PROBES")
+    # each variable alone fails the same way as neither: only both change the outcome
+    assert [c.id for c in search.polluters] == ["p.x", "p.y"]
+    assert search.changes and search.after_polluters
+
+    lister = cases[ids.index("p.lister")]
+    before = cases[: ids.index("p.lister")]
+    # the leak check undoes the leaked schema, so nothing before the lister changes it ...
+    assert not find_polluters(lister, before, FAKESNOW, "PROBES").polluters
+    # ... unless leaks are kept
+    kept = find_polluters(lister, before, FAKESNOW, "PROBES", cleanup=False)
+    assert [c.id for c in kept.polluters] == ["p.schema"]
+
+
+def test_find_polluter_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    path = str(case_dir(tmp_path, "p", POLLUTERS))
+    assert main([path, "--find-polluter", "p.victim"]) == 0
+    out = capsys.readouterr().out
+    assert "  p.x\n  p.y\n" in out
+    assert f"reproduce: python -m probes {path} --find-polluter p.victim --order p.x,p.y,p.victim" in out
+    assert main([path, "--find-polluter", "p.a"]) == 1
+    assert main([path, "--find-polluter", "p.victim", "--target", SNOWFLAKE]) == 2
+    with pytest.raises(TargetError, match="not snowflake"):
+        find_polluters(Case(id="v", description="d", sql="select 1"), [], SNOWFLAKE, "PROBES")
