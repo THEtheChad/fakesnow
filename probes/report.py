@@ -53,13 +53,26 @@ def unfiled_differences(report: Report) -> list[tuple[Case, list[str], str]]:
     return found
 
 
+def leaks(report: Report) -> list[tuple[Case, str, tuple[str, ...]]]:
+    """Each case and target (the reference too, when it ran now) whose outcome reports leaks."""
+    runs = [report.reference, *report.candidates]
+    return [
+        (case, run.target, outcome.leaks)
+        for case in report.cases
+        for run in runs
+        if (outcome := run.outcomes.get(case.id)) and outcome.leaks
+    ]
+
+
 def summary(report: Report) -> str:
     lines = [f"{len(report.cases)} cases; reference {describe_target(report.reference)}"]
+    leaked = leaks(report)
     for run in report.candidates:
         c = counts(report, run.target)
         lines.append(
             f"  {describe_target(run)}: {c[Status.MATCH]} match, {c[Status.UNEXPECTED]} unexpected, "
-            f"{c[Status.EXPECTED]} expected, {c[Status.NOW_MATCHES]} now match, {c[Status.ERROR]} errors"
+            f"{c[Status.EXPECTED]} expected, {c[Status.NOW_MATCHES]} now match, {c[Status.ERROR]} errors, "
+            f"{sum(target == run.target for _, target, _ in leaked)} leaked"
         )
     if unfiled := unfiled_differences(report):
         lines.append(f"  {len(unfiled)} expected differences have no upstream issue yet (refs: unfiled)")
@@ -81,6 +94,9 @@ def summary(report: Report) -> str:
         for case, target, v in found:
             detail = v.differences[0].splitlines()[0] if v.differences else ", ".join(e for e in case.all_refs)
             lines.append(f"  {target:<16} {case.id}: {show(detail, 160)}")
+    if leaked:
+        lines += ["", "Leaks (shared state a case left changed; the runner undid it unless noted):"]
+        lines += [f"  {target:<16} {case.id}: {show('; '.join(found), 160)}" for case, target, found in leaked]
     lines += ["", comparison_scope(report)]
     return "\n".join(lines)
 
@@ -119,6 +135,19 @@ def markdown(report: Report) -> str:
         out.append(f"| {target} | " + " | ".join(str(c[s]) for s in Status) + " |")
     if not report.with_expected:
         out += ["", "The reference isn't Snowflake, so expected differences don't apply."]
+
+    if leaked := leaks(report):
+        out += [
+            "",
+            "## Leaks",
+            "",
+            "Shared state a case left changed after its teardown and its schema was dropped. The runner undid it "
+            "unless noted, so later cases weren't affected.",
+            "",
+            "| case | target | leaks |",
+            "|---|---|---|",
+        ]
+        out += [f"| `{case.id}` | {target} | {_md_text('; '.join(found))} |" for case, target, found in leaked]
 
     if unfiled := unfiled_differences(report):
         out += [
@@ -186,6 +215,8 @@ def outcome_rows(case: Case, outcomes: Sequence[Outcome | None]) -> list[tuple[s
         cells = [_md_step(o.steps[i], case) if o and i < len(o.steps) else "" for o in outcomes]
         rows.append((_md_code(sql), cells))
     rows += [("note", [_md_text(note) if o is p else "" for p in outcomes]) for o in present for note in o.notes]
+    if any(o.leaks for o in present):
+        rows.append(("leaks", [_md_text("; ".join(o.leaks)) if o and o.leaks else "" for o in outcomes]))
     return rows
 
 

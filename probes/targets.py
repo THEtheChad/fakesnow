@@ -102,6 +102,13 @@ class Names:
         run = {self.run_schema: "{run_schema}"} if self.run_schema else {}
         return {self.schema: "{schema}", self.database: "{database}", **run}
 
+    def is_other_run(self, name: str) -> bool:
+        """Whether a schema or database is named like another run's: concurrent runs may share a database."""
+        return bool(_RUN_NAME.match(name)) and not name.upper().startswith(self.run)
+
+
+_RUN_NAME = re.compile(r"PROBES_\d{8}_\d{6}_[0-9A-F]{16}", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class SnowflakeConfig:
@@ -171,7 +178,7 @@ class Session:
         return names
 
     def leave_case(self) -> str | None:
-        """Drop the case's schema and everything in it; why that failed, if it did."""
+        """Drop the case's schema and everything in it; why that failed, if it did (the leak check then reports it)."""
         names, self.names = self.names, self.run_names
         if names is self.run_names:
             return None
