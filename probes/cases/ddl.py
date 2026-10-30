@@ -4,7 +4,7 @@ from typing import Any
 
 from snowflake.connector import DictCursor, SnowflakeConnection
 
-from probes import UNFILED, Case, Compare, Expected, ProbeContext
+from probes import Case, Compare, Expected, ProbeContext
 
 INFO = [
     "create or replace table ddl_info (id int not null, name varchar(10), amount number(10,2), "
@@ -264,7 +264,7 @@ CASES = [
         teardown=["drop database if exists {schema}_SS"],
         run=show_schemas,
         expected=Expected(
-            ["#490", UNFILED],
+            ["#490"],
             "SHOW SCHEMAS LIKE ignores the pattern and lists every schema; "
             "DROP DATABASE isn't supported, so the case's database is left behind",
         ),
