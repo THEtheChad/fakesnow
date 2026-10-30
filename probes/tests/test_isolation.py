@@ -13,6 +13,7 @@ import pytest
 from snowflake.connector.converter import SnowflakeConverter
 
 from fakesnow.instance import FakeSnow
+from fakesnow.temporary_tables import TemporaryTables
 from probes import targets
 from probes.cli import main, run
 from probes.compare import Status, classify, comparison_fingerprint
@@ -346,15 +347,14 @@ DROPS_ITS_OTHER_SCHEMA = Case(
 
 
 @pytest.mark.parametrize("cleanup", [True, False], ids=["undone", "kept"])
-def test_a_temporary_table_left_by_dropping_another_schema_is_a_fakesnow_leak(cleanup: bool):
-    # on Snowflake the table goes with its schema; fakesnow keeps it: only the case's own schema's go silently
+def test_a_temporary_table_goes_with_another_schema_the_case_drops(cleanup: bool):
+    # as on Snowflake (case ddl.drop-schema-drops-temporary-table), so it's no leak, nor left for a later case
     with open_target(FAKESNOW, Names.new("PROBES")) as session:
         check = LeakCheck(session, cleanup=cleanup)
         outcome = run_case(DROPS_ITS_OTHER_SCHEMA, session, check)
         again = run_case(select("again", "create temporary table gone_tt (x int)"), session, check)
-    fate = "undone" if cleanup else "kept"
-    assert shown(outcome) == (f"temporary table {{database}}.{{schema}}_T.GONE_TT left behind ({fate})",)
-    assert (again.steps[0].error is None) == cleanup
+    assert shown(outcome) == ()
+    assert again.steps[0].error is None
 
 
 def test_the_case_schemas_own_temporary_tables_go_with_it_silently():
@@ -365,14 +365,14 @@ def test_the_case_schemas_own_temporary_tables_go_with_it_silently():
         assert session.temporary_tables() == {}
 
 
-def test_a_temporary_table_another_schema_owned_is_never_dropped_by_a_later_case():
-    # the reviewer's repro: a temporary table in PROBES.OUTSIDE, then OUTSIDE dropped, then an unrelated case
+def test_a_temporary_table_another_schema_owns_is_never_dropped_by_a_later_case():
+    # the reviewer's repro was a temporary table in PROBES.OUTSIDE, then OUTSIDE dropped, then an unrelated case; now
+    # fakesnow drops the table with its schema, as Snowflake does, so OUTSIDE stays
     names = Names.new("PROBES")
     with open_target(FAKESNOW, names) as session:
         cur = session.conn.cursor()
         cur.execute(f"create schema {names.database}.OUTSIDE")
         cur.execute(f"create temporary table {names.database}.OUTSIDE.kept_tt (x int)")
-        cur.execute(f"drop schema {names.database}.OUTSIDE")
         session.restore()
         check = LeakCheck(session, cleanup=False)
         outcome = run_case(select("unrelated"), session, check)
@@ -428,6 +428,9 @@ def test_a_temporary_table_with_a_quote_in_its_name_is_dropped_with_the_case(tar
 def test_a_failed_temporary_table_drop_is_a_note_and_keeps_the_outcome(monkeypatch: pytest.MonkeyPatch):
     # how names were quoted before: a quote in one broke fakesnow's tokenizer, and the case's outcome with it
     monkeypatch.setattr(targets, "quoted", lambda name: f'"{name}"')
+    # fakesnow now drops a schema's temporary tables with it, as Snowflake does; keep them, as it used to, so the
+    # runner drops this one itself
+    monkeypatch.setattr(TemporaryTables, "_drop_orphans", lambda self, in_transaction: None)
     quoting = Case(id="quoting", description="d", sql=['create temporary table "a""b" (x int)', "select 1"])
     with open_target(FAKESNOW, Names.new("PROBES")) as session:
         check = LeakCheck(session)
