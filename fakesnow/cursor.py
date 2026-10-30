@@ -462,6 +462,7 @@ class FakeSnowflakeCursor:
                 self._conn.temporary_tables.transform,
                 current_database=self._conn.database,
                 current_schema=self._conn.schema,
+                in_transaction=self._conn._in_transaction,
                 copy=False,
             )
         )
@@ -661,9 +662,12 @@ class FakeSnowflakeCursor:
                 self._duck_conn.begin()
                 self._conn._in_transaction = True
 
-            # In transaction book keeping
-            elif isinstance(transformed, exp.Transaction):
-                self._conn._in_transaction = True
+        # In transaction book keeping, including BEGIN in autocommit mode, whose transaction stays open if autocommit
+        # is then turned off. COMMIT and ROLLBACK end it only once they succeed, see below.
+        if isinstance(transformed, exp.Transaction):
+            self._conn._in_transaction = True
+
+        self._conn.temporary_tables.validate(transformed, self._conn._in_transaction)
 
         column_updates = info_schema.column_metadata_updates(
             self._duck_conn,
