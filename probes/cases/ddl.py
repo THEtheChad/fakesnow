@@ -193,10 +193,6 @@ CASES = [
         ],
         sql="create temporary table ddl_dtt (x int)",
         teardown=["drop schema if exists {database}.{schema}_T"],
-        expected=Expected(
-            [UNFILED],
-            "DROP SCHEMA leaves the schema's temporary tables in DuckDB's temp catalog, so the name is still taken",
-        ),
     ),
     # --- INFORMATION_SCHEMA
     Case(
