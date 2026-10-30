@@ -662,11 +662,6 @@ class FakeSnowflakeCursor:
                 self._duck_conn.begin()
                 self._conn._in_transaction = True
 
-        # In transaction book keeping, including BEGIN in autocommit mode, whose transaction stays open if autocommit
-        # is then turned off. COMMIT and ROLLBACK end it only once they succeed, see below.
-        if isinstance(transformed, exp.Transaction):
-            self._conn._in_transaction = True
-
         self._conn.temporary_tables.validate(transformed, self._conn._in_transaction)
 
         column_updates = info_schema.column_metadata_updates(
@@ -744,7 +739,12 @@ class FakeSnowflakeCursor:
             msg = cast(str, e.args[0]).split("\n")[0]
             raise snowflake.connector.errors.ProgrammingError(msg=msg, errno=100035, sqlstate="22007") from e
 
-        if isinstance(transformed, (exp.Commit, exp.Rollback)):
+        # In transaction book keeping, including BEGIN in autocommit mode, whose transaction stays open if autocommit
+        # is then turned off. Only once the statement succeeds: a failed BEGIN opens no transaction, and a failed
+        # COMMIT or ROLLBACK leaves it open.
+        if isinstance(transformed, exp.Transaction):
+            self._conn._in_transaction = True
+        elif isinstance(transformed, (exp.Commit, exp.Rollback)):
             self._conn._in_transaction = False
 
         self._conn.temporary_tables.record(transformed)
