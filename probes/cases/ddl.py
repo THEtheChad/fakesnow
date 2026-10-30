@@ -39,6 +39,16 @@ def show_schemas(conn: SnowflakeConnection, ctx: ProbeContext) -> list[tuple[Any
     return show(conn, ctx, "show schemas like 'SS_A' in database {schema}_SS", ["name", "database_name"])
 
 
+def show_databases(conn: SnowflakeConnection, ctx: ProbeContext) -> list[tuple[Any, ...]]:
+    rows = show(conn, ctx, "show databases like '{schema}_SD_A'", ["name"])
+    # only the case's own databases: fakesnow also lists the run's, and those other cases left behind
+    return sorted(row for row in rows if row[0].upper().startswith(ctx.schema.upper()))
+
+
+def show_new_database_schemas(conn: SnowflakeConnection, ctx: ProbeContext) -> list[tuple[Any, ...]]:
+    return show(conn, ctx, "show terse schemas in database {schema}_PD", ["name"])
+
+
 def describe_table(conn: SnowflakeConnection, ctx: ProbeContext) -> list[tuple[Any, ...]]:
     return show(conn, ctx, "describe table ddl_info", ["name", "type", "kind", "null?", "primary key"])
 
@@ -266,6 +276,34 @@ CASES = [
         expected=Expected(
             ["#490"],
             "SHOW SCHEMAS LIKE ignores the pattern and lists every schema; "
+            "DROP DATABASE isn't supported, so the case's database is left behind",
+        ),
+    ),
+    Case(
+        id="ddl.show-databases",
+        description="SHOW DATABASES LIKE lists only the matching database",
+        setup=[
+            "create database {schema}_SD_A",
+            "create database {schema}_SD_B",
+            "use schema {database}.{schema}",
+        ],
+        teardown=["drop database if exists {schema}_SD_A", "drop database if exists {schema}_SD_B"],
+        run=show_databases,
+        expected=Expected(
+            ["#490"],
+            "SHOW DATABASES LIKE ignores the pattern and lists every database; "
+            "DROP DATABASE isn't supported, so the case's databases are left behind",
+        ),
+    ),
+    Case(
+        id="ddl.create-database-public-schema",
+        description="CREATE DATABASE creates a PUBLIC schema",
+        setup=["create database {schema}_PD", "use schema {database}.{schema}"],
+        teardown=["drop database if exists {schema}_PD"],
+        run=show_new_database_schemas,
+        expected=Expected(
+            ["#490"],
+            "a new database has no PUBLIC schema, only information_schema (in lower case); "
             "DROP DATABASE isn't supported, so the case's database is left behind",
         ),
     ),
