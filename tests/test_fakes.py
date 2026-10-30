@@ -1241,7 +1241,8 @@ def test_temporary_table_aborted_transaction(conn: snowflake.connector.Snowflake
 def test_temporary_table_create_after_failed_statement(
     conn: snowflake.connector.SnowflakeConnection, table: str
 ) -> None:
-    # Outside autocommit, DDL ends the aborted transaction (see #470), so the temporary table is created, in its schema.
+    # Snowflake keeps the transaction after a failed statement, whereas fakesnow aborts it and refuses DDL until
+    # ROLLBACK, see #470. After that the temporary table is created, in its schema.
     conn.autocommit(False)
     with conn.cursor() as cur:
         cur.execute("create schema db1.schema2")
@@ -1250,6 +1251,12 @@ def test_temporary_table_create_after_failed_statement(
         cur.execute("insert into perm1 values (1)")
         with pytest.raises(ProgrammingError):
             cur.execute("insert into perm1 values ('bad')")
+        with pytest.raises(ProgrammingError, match="transaction was aborted") as excinfo:
+            cur.execute(f"create temporary table {table} (id int)")
+        assert (excinfo.value.errno, excinfo.value.sqlstate) == (9999, "99999")
+        cur.execute("rollback")
+        with pytest.raises(ProgrammingError, match="does not exist"):
+            cur.execute("select * from db1.schema2.temp1")
         cur.execute(f"create temporary table {table} (id int)")
         cur.execute("insert into db1.schema2.temp1 values (1)")
         assert cur.execute("select * from db1.schema2.temp1").fetchall() == [(1,)]
@@ -1271,6 +1278,11 @@ def test_temporary_table_create_after_failed_statement_missing_schema(
         cur.execute("insert into db1.schema1.perm1 values (1)")
         with pytest.raises(ProgrammingError):
             cur.execute("insert into db1.schema1.perm1 values ('bad')")
+        # fakesnow refuses DDL in the aborted transaction until ROLLBACK, see #470
+        with pytest.raises(ProgrammingError, match="transaction was aborted") as excinfo:
+            cur.execute("create temporary table temp1 (id int)")
+        assert (excinfo.value.errno, excinfo.value.sqlstate) == (9999, "99999")
+        cur.execute("rollback")
         with pytest.raises(ProgrammingError, match="does not exist") as excinfo:
             cur.execute("create temporary table temp1 (id int)")
         assert excinfo.value.errno == 2003
@@ -1289,8 +1301,8 @@ def test_temporary_table_create_after_failed_statement_missing_schema(
 def test_temporary_table_replace_after_failed_statement_missing_schema(
     conn: snowflake.connector.SnowflakeConnection, statement: str
 ) -> None:
-    # Outside autocommit, DDL ends the aborted transaction (see #470), and only then can the schema be checked, which
-    # must happen before the existing table is replaced.
+    # fakesnow refuses DDL in the aborted transaction until ROLLBACK (see #470), which leaves the existing table. After
+    # that the schema is checked before the existing table is replaced.
     conn.autocommit(False)
     with conn.cursor() as cur:
         cur.execute("create table perm1 (id int)")
@@ -1298,6 +1310,11 @@ def test_temporary_table_replace_after_failed_statement_missing_schema(
         cur.execute("insert into perm1 values (1)")
         with pytest.raises(ProgrammingError):
             cur.execute("insert into perm1 values ('bad')")
+        with pytest.raises(ProgrammingError, match="transaction was aborted") as excinfo:
+            cur.execute(statement)
+        assert (excinfo.value.errno, excinfo.value.sqlstate) == (9999, "99999")
+        cur.execute("rollback")
+        assert cur.execute("select * from temp1").fetchall() == [(42,)]
         with pytest.raises(ProgrammingError, match="does not exist") as excinfo:
             cur.execute(statement)
         assert excinfo.value.errno == 2003
@@ -1305,17 +1322,19 @@ def test_temporary_table_replace_after_failed_statement_missing_schema(
 
 
 def test_temporary_table_merge_after_failed_statement(conn: snowflake.connector.SnowflakeConnection) -> None:
-    # MERGE first replaces a temporary table of candidates, which outside autocommit ends the aborted transaction
-    # (see #470), as other DDL does.
+    # MERGE first replaces a temporary table of candidates. Snowflake keeps the transaction after a failed statement,
+    # whereas fakesnow aborts it and refuses the MERGE until ROLLBACK, see #470. After that the MERGE runs.
+    merge = "merge into perm1 using (select 2 as id) s on perm1.id = s.id when not matched then insert values (s.id)"
     conn.autocommit(False)
     with conn.cursor() as cur:
         cur.execute("create table perm1 (id int)")
         cur.execute("insert into perm1 values (1)")
         with pytest.raises(ProgrammingError):
             cur.execute("insert into perm1 values ('bad')")
-        cur.execute(
-            "merge into perm1 using (select 2 as id) s on perm1.id = s.id when not matched then insert values (s.id)"
-        )
+        with pytest.raises(duckdb.TransactionException, match="aborted"):
+            cur.execute(merge)
+        cur.execute("rollback")
+        cur.execute(merge)
         assert cur.execute("select * from perm1").fetchall() == [(2,)]
 
 
