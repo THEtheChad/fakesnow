@@ -26,7 +26,7 @@ def show_tables(conn: SnowflakeConnection, ctx: ProbeContext) -> list[tuple[Any,
 def show_tables_columns(conn: SnowflakeConnection, ctx: ProbeContext) -> list[str]:
     cur = conn.cursor()
     cur.execute("show tables like 'NOTHING_MATCHES'")
-    return [d.name for d in cur.description]
+    return [d.name for d in cur.description]  # pyright: ignore[reportOptionalIterable]
 
 
 def show_columns(conn: SnowflakeConnection, ctx: ProbeContext) -> list[tuple[Any, ...]]:

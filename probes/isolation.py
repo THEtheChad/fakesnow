@@ -395,6 +395,7 @@ class LeakCheck:
         """A SHOW's rows, by lower-case column name."""
         cur = self.session.conn.cursor()
         cur.execute(f"show {what}")
+        assert cur.description
         columns = [d.name.lower() for d in cur.description]
         return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
 

@@ -14,9 +14,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import snowflake.connector.errors
-from snowflake.connector.constants import FIELD_ID_TO_NAME
+from snowflake.connector._internal.type_codes import FIELD_ID_TO_NAME
 from snowflake.connector.cursor import SnowflakeCursor
-from snowflake.connector.secret_detector import SecretDetector
 
 _CODES_PREFIX = re.compile(r"^\d{6} \([0-9A-Za-z/]{2,5}\): ")
 
@@ -27,9 +26,45 @@ def redact(text: str) -> str:
     secrets = [os.environ.get(f"PROBES_SNOWFLAKE_{key}", "") for key in keys]
     for secret in sorted(filter(None, secrets), key=len, reverse=True):
         text = text.replace(secret, "[redacted]")
-    masked = SecretDetector.mask_secrets(text)
-    _, message, error = masked
-    return message if message is not None and error is None else "[redacted diagnostic]"
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+# The secrets connector 4's SecretDetector masked, in its order. Connector 5 has no equivalent.
+_SECRET_VALUE = r"[a-z0-9!\"#\$%&\\\'\(\)\*\+\,-\./:;<=>\?\@\[\]\^_`\{\|\}~]"
+_SECRET_PATTERNS = [
+    (
+        re.compile(r"(aws_key_id|aws_secret_key|access_key_id|secret_access_key)\s*=\s*'([^']+)'", re.IGNORECASE),
+        r"\1='****'",
+    ),
+    (
+        re.compile(r"(sig|signature|AWSAccessKeyId|password|passcode)=(?P<secret>[a-z0-9%/+]{16,})", re.IGNORECASE),
+        r"\1=****",
+    ),
+    (re.compile(r'(accessToken|tempToken|keySecret)"\s*:\s*"([a-z0-9/+]{32,}={0,2})"', re.IGNORECASE), r'\1":"XXXX"'),
+    (re.compile(rf'(access_token|refresh_token)"\s*:\s*"({_SECRET_VALUE}{{3,}})"', re.IGNORECASE), r'\1":"XXXX"'),
+    (
+        re.compile(
+            r"-{3,}BEGIN [A-Z ]*PRIVATE KEY-{3,}\n([\s\S]*?)\n-{3,}END [A-Z ]*PRIVATE KEY-{3,}",
+            re.MULTILINE | re.IGNORECASE,
+        ),
+        "-----BEGIN PRIVATE KEY-----\\\\nXXXX\\\\n-----END PRIVATE KEY-----",
+    ),
+    (
+        re.compile(r'"privateKeyData": "([a-z0-9/+=\\n]{10,})"', re.MULTILINE | re.IGNORECASE),
+        '"privateKeyData": "XXXX"',
+    ),
+    (re.compile(r"(passcode|otp|pin|otac)([\'\"\s:=]+)([0-9]{4,6})", re.IGNORECASE), r"\1\2****"),
+    (
+        re.compile(
+            rf"(oauthClientId|oauthClientSecret|clientSecret)([\'\"\s:=]+)({_SECRET_VALUE}{{8,}})", re.IGNORECASE
+        ),
+        r"\1\2****",
+    ),
+    (re.compile(rf"(password|pwd)([\'\"\s:=]+)({_SECRET_VALUE}{{6,}})", re.IGNORECASE), r"\1\2****"),
+    (re.compile(r"(token|assertion content)([\'\"\s:=]+)([a-z0-9=/_\-\+\.:%]{8,})", re.IGNORECASE), r"\1\2****"),
+]
 
 
 @dataclass(frozen=True)

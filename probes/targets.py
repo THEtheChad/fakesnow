@@ -393,7 +393,11 @@ def _fakesnow_server(names: Names) -> Iterator[Session]:
         try:
             conn.cursor().execute(f"create schema {names.database}.{names.schema}")
             token = conn.rest.token if conn.rest else None
-            yield Session(FAKESNOW_SERVER, names, conn, connect, fakesnow_info(), lambda: server.sessions[str(token)])
+
+            def session() -> FakeSnowflakeConnection:
+                return server.sessions[str(token)].conn
+
+            yield Session(FAKESNOW_SERVER, names, conn, connect, fakesnow_info(), session)
         finally:
             conn.close()
 
@@ -419,10 +423,10 @@ def _fresh_server_instance() -> Iterator[Any]:
     finally:
         server.shared_fs = shared
         sessions: dict[str, Any] = server.sessions
-        for token, conn in list(sessions.items()):
-            if conn.results_cache is instance.results_cache:
+        for token, session in list(sessions.items()):
+            if session.conn.results_cache is instance.results_cache:
                 del sessions[token]
-                conn.close()
+                session.conn.close()
         instance.results_cache.clear()
         instance.duck_conn.close()
 

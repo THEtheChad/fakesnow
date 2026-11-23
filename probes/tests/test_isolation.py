@@ -1,8 +1,10 @@
 """Isolation: each case's own schema, the leak check, shuffled order, and finding polluters. No Snowflake."""
 
+import datetime
 import importlib
 import json
 import re
+import zoneinfo
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -10,7 +12,6 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from snowflake.connector.converter import SnowflakeConverter
 
 from fakesnow.instance import FakeSnow
 from fakesnow.temporary_tables import TemporaryTables
@@ -171,7 +172,7 @@ def test_server_runs_in_one_process_dont_see_each_others_databases():
 def test_a_server_target_forgets_its_sessions_on_the_way_out_and_only_its_own():
     # probes keeps fakesnow.server() from before the module shadows it, so importing it here is safe
     server: Any = importlib.import_module("fakesnow.server")
-    unrelated = FakeSnow().connect()  # another instance's session, as another server user's would be
+    unrelated = server.ServerSession(FakeSnow().connect())  # another instance's session, as another user's would be
     server.sessions["unrelated"] = unrelated
     # sessions other tests in this process left behind are as unrelated as this one
     others = dict(server.sessions)
@@ -651,9 +652,12 @@ class StubCursor:
             self.result(["created_on", "name", "kind", "database_name", "schema_name"], rows)
         elif text.startswith("show tables in database"):
             # created_on is a TIMESTAMP_LTZ, which the connector gives in the session's TIMEZONE
-            converter = SnowflakeConverter()
-            converter.set_parameter("TIMEZONE", conn.parameters["TIMEZONE"][0])
-            ltz = converter.to_python_method("TIMESTAMP_LTZ", {"scale": 3})
+            zone = zoneinfo.ZoneInfo(conn.parameters["TIMEZONE"][0])
+
+            def ltz(created_on: str) -> datetime.datetime:
+                seconds, fraction = created_on.split(".")
+                return datetime.datetime.fromtimestamp(int(seconds), zone).replace(microsecond=int(fraction) * 1000)
+
             rows = [
                 (ltz(created_on), name, conn.database, schema, "TEMPORARY", "", "", 0, 0, "PROBER", "1")
                 for (schema, name), created_on in sorted(conn.temporary_tables.items())
