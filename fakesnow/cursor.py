@@ -126,6 +126,8 @@ class FakeSnowflakeCursor:
         self._sfqid = None
         self._converter = ClientSideBindingConverter()
         self._prefetch_hook: Callable[[], None] | None = None
+        # a statement whose identifier case couldn't be checked yet, see _transform
+        self._unchecked_case: Expr | None = None
 
     def __enter__(self) -> Self:
         return self
@@ -417,7 +419,13 @@ class FakeSnowflakeCursor:
         expression = expression.transform(lambda e: transforms.identifier(e, params), copy=False).transform(
             transforms.upper_case_unquoted_identifiers, copy=False
         )
-        self.check_identifier_case(expression)
+        self._unchecked_case = None
+        try:
+            self.check_identifier_case(expression)
+        except duckdb.TransactionException:
+            # An aborted transaction rejects the catalog reads, see #499. Outside autocommit, DDL ends the
+            # transaction before it runs, so _execute checks it then. Anything else fails as it would here.
+            self._unchecked_case = expression.copy()
         return (
             expression.transform(transforms.alter_session, copy=False)
             .transform(transforms.update_variables, variables=self._conn.variables, copy=False)
@@ -536,6 +544,7 @@ class FakeSnowflakeCursor:
         self._rowcount = None
         self._sfqid = None
 
+        unchecked_case, self._unchecked_case = self._unchecked_case, None
         cmd = expr.key_command(transformed)
 
         sql = transformed.sql(dialect="duckdb")
@@ -586,6 +595,8 @@ class FakeSnowflakeCursor:
             ):
                 self._duck_conn.commit()
                 self._conn._in_transaction = False
+                if unchecked_case:
+                    self.check_identifier_case(unchecked_case)
 
             # Start implicit transaction for DML (INSERT, UPDATE, DELETE, MERGE, COPY)
             # see https://docs.snowflake.com/en/sql-reference/transactions#autocommit
