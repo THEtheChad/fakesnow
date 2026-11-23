@@ -24,23 +24,16 @@ _ACCEPTS = "fakesnow refuses it, Snowflake accepts it"
 _REFUSES = ("Snowflake refuses it, fakesnow accepts it", ["#481"])
 _CREATE_ONLY = "Snowflake creates the table, then refuses the name in SELECT"
 _SELECT_ONLY = ("Snowflake refuses it in CREATE TABLE, fakesnow only in the SELECT", ["#481"])
-# fakesnow describes a result by parsing its generated DuckDB SQL again, and INSTALL isn't quoted in it
-_DESCRIBE = (
-    "cursor.description re-parses the generated DuckDB SQL: raw sqlglot ParseError",
-    ["#481", "tobymao/sqlglot#8804"],
-)
 TABLE_DIFFERS: dict[str, tuple[str, list[str]]] = {
     **dict.fromkeys(["RETURNING", "GLOB", "CONCURRENTLY"], (_ACCEPTS, _PARSER)),
     **dict.fromkeys(["LATERAL", "USING"], (f"{_CREATE_ONLY}; fakesnow refuses the CREATE", _PARSER)),
     "ASOF": (f"{_CREATE_ONLY}; fakesnow accepts both", ["#481"]),
     **dict.fromkeys(["ROW", "ROWS"], _REFUSES),
-    "INSTALL": _DESCRIBE,
 }
 COLUMN_DIFFERS: dict[str, tuple[str, list[str]]] = {
     **dict.fromkeys(["EXCLUDE", "RETURNING", "GLOB", "LATERAL", "USING"], (_ACCEPTS, _PARSER)),
     **dict.fromkeys(["TRY_CAST", "DEFAULT", "ROW", "ROWS"], _REFUSES),
     **dict.fromkeys(["UNION", "SAMPLE"], _SELECT_ONLY),
-    "INSTALL": _DESCRIBE,
 }
 
 

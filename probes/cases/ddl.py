@@ -211,7 +211,6 @@ CASES = [
         setup=INFO,
         sql="select table_catalog, table_schema, table_name, table_type, comment from information_schema.tables "
         "where table_schema = '{schema}' and table_name = 'DDL_INFO'",
-        expected=Expected(["#490"], "INFORMATION_SCHEMA.TABLES returns the COMMENT column name in lower case"),
     ),
     Case(
         id="ddl.information-schema-columns",
