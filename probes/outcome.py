@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import datetime
 import decimal
+import enum
 import os
 import re
 import zoneinfo
@@ -92,6 +93,56 @@ class Step:
     error: ErrorInfo | None = None
 
 
+class Fate(enum.Enum):
+    """What the runner did about a leak."""
+
+    UNDONE = "undone"
+    KEPT = "kept"
+    """Left in place on purpose (--keep-leaks)."""
+    NOT_UNDONE = "not undone"
+    """The runner has no way to undo it, e.g. a dropped table, whose rows are gone."""
+    UNDO_FAILED = "undoing it failed"
+    UNDO_DIDNT_TAKE = "undoing it didn't take"
+    """The undo ran without an error, but the snapshot after it still found the leak."""
+
+
+NOT_THE_RUNS = "not named after the run"
+"""Ends the description of a schema left behind or dropped that isn't named after the run (see probes.isolation)."""
+
+
+@dataclass(frozen=True)
+class Leak:
+    """Shared state a case left changed (see probes.isolation), and what the runner did about it."""
+
+    description: str
+    fate: Fate | None = None
+    """None in a report recorded before fates were: it may or may not have been undone."""
+    error: str | None = None
+    """Why undoing it failed, as error codes only: a pinned outcome shouldn't depend on a message's wording."""
+
+    @property
+    def compared(self) -> str:
+        """What's compared and pinned: the description, with why the runner couldn't undo it if it couldn't.
+
+        Not whether it was undone or kept: that's the run's choice, not the target's behavior.
+        """
+        if self.fate is Fate.NOT_UNDONE:
+            return f"{self.description} (not undone)"
+        if self.fate is Fate.UNDO_FAILED:
+            return f"{self.description} (undoing it failed: {self.error})"
+        if self.fate is Fate.UNDO_DIDNT_TAKE:
+            return f"{self.description} (undoing it didn't take)"
+        return self.description
+
+    @property
+    def not_the_runs(self) -> bool:
+        """Whether it's a schema not named after the run, which another session could have left or dropped."""
+        return self.description.endswith(f", {NOT_THE_RUNS}")
+
+    def __str__(self) -> str:
+        return f"{self.description} ({self.fate.value})" if self.fate in (Fate.UNDONE, Fate.KEPT) else self.compared
+
+
 @dataclass(frozen=True)
 class Outcome:
     """The outcome of a case on one target.
@@ -101,6 +152,9 @@ class Outcome:
     value / error: what a Python probe returned or raised.
     crash: the harness itself failed running the case.
     notes: things worth showing but not compared, e.g. a failed teardown.
+    leaks: shared state the case left changed after its teardown and its schema was dropped (see probes.isolation),
+        each with what the runner did about it; empty when there was none, None when it wasn't checked (an earlier
+        run's).
     """
 
     setup_error: Step | None = None
@@ -109,6 +163,7 @@ class Outcome:
     error: ErrorInfo | None = None
     crash: str | None = None
     notes: tuple[str, ...] = field(default=())
+    leaks: tuple[Leak, ...] | None = None
 
 
 Scrub = Callable[[str], str]
@@ -218,10 +273,23 @@ def encode(value: Any) -> Any:
                     "error": encode(value.error),
                     "crash": value.crash,
                     "notes": list(value.notes),
+                    **({"leaks": [_encode_leak(leak) for leak in value.leaks]} if value.leaks is not None else {}),
                 }
             }
         case _:
             return {"$repr": repr(value)}
+
+
+def _encode_leak(leak: Leak) -> dict[str, str]:
+    fate = {"fate": leak.fate.value} if leak.fate else {}
+    return {"description": leak.description, **fate, **({"error": leak.error} if leak.error else {})}
+
+
+def _decode_leak(leak: str | dict[str, str]) -> Leak:
+    """A report from before fates were recorded lists each leak as its text: what it did isn't known."""
+    if isinstance(leak, str):
+        return Leak(leak)
+    return Leak(leak["description"], Fate(leak["fate"]) if "fate" in leak else None, leak.get("error"))
 
 
 def _tz_name(tz: datetime.tzinfo | None) -> str | None:
@@ -273,6 +341,7 @@ def decode(value: Any) -> Any:
                 error=decode(body["error"]),
                 crash=body["crash"],
                 notes=tuple(body["notes"]),
+                leaks=tuple(_decode_leak(leak) for leak in body["leaks"]) if "leaks" in body else None,
             )
         case "$repr":
             return _Repr(body)

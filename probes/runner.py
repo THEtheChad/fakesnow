@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 import traceback
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -10,6 +11,7 @@ from snowflake.connector.cursor import SnowflakeCursor
 
 from probes.compare import Verdict, classify
 from probes.context import ProbeContext
+from probes.isolation import LeakCheck, reach, statements_reach
 from probes.model import Case
 from probes.outcome import ErrorInfo, Outcome, Scrub, Step, redact, run_statement, scrub_error, scrub_value, scrubber
 from probes.targets import SNOWFLAKE, Names, Session, SnowflakeConfig, open_target
@@ -25,6 +27,8 @@ class TargetRun:
     fingerprints: dict[str, str] = field(default_factory=dict[str, str])
     recorded: bool = False
     """Loaded from an earlier run's report rather than run now."""
+    leak_check: str | None = None
+    """What the leak check covered (LeakCheck.scope); None when not recorded."""
 
 
 @dataclass
@@ -35,6 +39,10 @@ class Report:
     verdicts: dict[str, dict[str, Verdict]]
     """case id -> target -> verdict"""
     names: Names
+    seed: int | None = None
+    """The --shuffle seed the cases ran in the order of, None for the order of the files."""
+    order: list[str] = field(default_factory=list[str])
+    """Case ids in the order they ran; cases are reported in the order of the files."""
 
     @property
     def with_expected(self) -> bool:
@@ -48,9 +56,12 @@ class Report:
 Progress = Callable[[str, Case], None]
 
 
-def run_case(case: Case, session: Session) -> Outcome:
-    scrub = scrubber(session.names.placeholders)
+def run_case(case: Case, session: Session, leak_check: LeakCheck | None = None) -> Outcome:
+    """Run a case in a schema of its own, then reset the session and check for leaks."""
+    names = session.enter_case(case.id)
+    scrub = scrubber(names.placeholders)
     cur = session.conn.cursor()
+    outcome: Outcome | None = None
     try:
         try:
             outcome = _run(case, session, cur, scrub)
@@ -59,13 +70,26 @@ def run_case(case: Case, session: Session) -> Outcome:
     finally:
         # Teardown also runs on KeyboardInterrupt. Reset before teardown so an aborted transaction
         # cannot prevent dropping resources. A reset failure makes the run unusable, not a match.
-        session.conn.rollback()
-        session.conn.autocommit(True)
+        # Only a case that could have left a transaction open or autocommit off needs it (two round trips),
+        # and again after a teardown that could have, before the schema's dropped and the next case runs.
+        if outcome is None or outcome.crash or reach(case).session:
+            _reset(session)
         teardown = [run_statement(cur, session.names.render(t), t, scrub) for t in case.teardown]
-        session.restore()
+        if statements_reach(case.teardown).session:
+            _reset(session)
         cur.close()
+        dropped = session.leave_case()
+    assert outcome  # else the case's exception is on its way up
     notes = [f"teardown failed: {step.sql}: {step.error}" for step in teardown if step.error]
-    return replace(outcome, notes=tuple(notes)) if notes else outcome
+    notes += [scrub(dropped)] if dropped else []
+    outcome = replace(outcome, notes=tuple(notes)) if notes else outcome
+    return replace(outcome, leaks=leak_check.after(case, scrub)) if leak_check else outcome
+
+
+def _reset(session: Session) -> None:
+    """End any transaction and turn autocommit back on."""
+    session.conn.rollback()
+    session.conn.autocommit(True)
 
 
 def _run(case: Case, session: Session, cur: SnowflakeCursor, scrub: Scrub) -> Outcome:
@@ -102,15 +126,26 @@ def run_target(
     names: Names,
     snowflake_config: SnowflakeConfig | None = None,
     progress: Progress | None = None,
+    *,
+    cleanup: bool = True,
 ) -> TargetRun:
+    """Run the cases in the order given. cleanup=False leaves the leaks the leak check finds in place."""
     with open_target(target, names, snowflake_config) as session:
-        run = TargetRun(target, session.info)
+        leak_check = LeakCheck(session, cleanup=cleanup)
+        run = TargetRun(target, session.info, leak_check=leak_check.scope)
         for case in cases:
             if progress:
                 progress(target, case)
-            run.outcomes[case.id] = run_case(case, session)
+            run.outcomes[case.id] = run_case(case, session, leak_check)
             run.fingerprints[case.id] = case.fingerprint()
         return run
+
+
+def shuffled(cases: Sequence[Case], seed: int) -> list[Case]:
+    """The cases in a random order that depends only on the seed and the cases, the same on every target."""
+    order = list(cases)
+    random.Random(seed).shuffle(order)
+    return order
 
 
 def missing_outcome(case: Case, reference: TargetRun) -> Outcome | None:
@@ -122,7 +157,14 @@ def missing_outcome(case: Case, reference: TargetRun) -> Outcome | None:
     return None
 
 
-def compare_runs(cases: Sequence[Case], reference: TargetRun, candidates: Sequence[TargetRun], names: Names) -> Report:
+def compare_runs(
+    cases: Sequence[Case],
+    reference: TargetRun,
+    candidates: Sequence[TargetRun],
+    names: Names,
+    seed: int | None = None,
+    order: Sequence[str] = (),
+) -> Report:
     with_expected = reference.target == SNOWFLAKE
     verdicts: dict[str, dict[str, Verdict]] = {}
     for case in cases:
@@ -131,4 +173,4 @@ def compare_runs(cases: Sequence[Case], reference: TargetRun, candidates: Sequen
             c.target: classify(case, ref_outcome, c.outcomes[case.id], c.target, with_expected=with_expected)
             for c in candidates
         }
-    return Report(list(cases), reference, list(candidates), verdicts, names)
+    return Report(list(cases), reference, list(candidates), verdicts, names, seed, list(order or (c.id for c in cases)))

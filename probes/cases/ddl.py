@@ -4,7 +4,7 @@ from typing import Any
 
 from snowflake.connector import DictCursor, SnowflakeConnection
 
-from probes import Case, Compare, Expected, ProbeContext
+from probes import UNFILED, Case, Compare, Expected, ProbeContext
 
 INFO = [
     "create or replace table ddl_info (id int not null, name varchar(10), amount number(10,2), "
@@ -167,6 +167,7 @@ CASES = [
             "use schema {database}.{schema}_S2",
         ],
         sql="select * from ddl_tt",
+        teardown=["drop schema if exists {database}.{schema}_S2"],
         expected=Expected(["#479"], "DuckDB keeps all temporary tables in one catalog, searched first"),
     ),
     Case(
@@ -180,6 +181,22 @@ CASES = [
         ],
         sql="select x from ddl_shadow",
         teardown=["drop table if exists ddl_shadow"],
+    ),
+    Case(
+        id="ddl.drop-schema-drops-temporary-table",
+        description="DROP SCHEMA drops the temporary tables in it, so their names are free again",
+        setup=[
+            "create schema {database}.{schema}_T",
+            "create temporary table {database}.{schema}_T.ddl_dtt (x int)",
+            "drop schema {database}.{schema}_T cascade",
+            "use schema {database}.{schema}",
+        ],
+        sql="create temporary table ddl_dtt (x int)",
+        teardown=["drop schema if exists {database}.{schema}_T"],
+        expected=Expected(
+            [UNFILED],
+            "DROP SCHEMA leaves the schema's temporary tables in DuckDB's temp catalog, so the name is still taken",
+        ),
     ),
     # --- INFORMATION_SCHEMA
     Case(
@@ -250,7 +267,11 @@ CASES = [
         ],
         teardown=["drop database if exists {schema}_SS"],
         run=show_schemas,
-        expected=Expected(["#490"], "SHOW SCHEMAS LIKE ignores the pattern and lists every schema"),
+        expected=Expected(
+            ["#490", UNFILED],
+            "SHOW SCHEMAS LIKE ignores the pattern and lists every schema; "
+            "DROP DATABASE isn't supported, so the case's database is left behind",
+        ),
     ),
     Case(
         id="ddl.describe-table",
