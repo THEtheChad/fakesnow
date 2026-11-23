@@ -81,8 +81,9 @@ class TemporaryTables:
                 name in self._names
                 and self.oid(expression.catalog or current_database, expression.db, name) is not None
             ):
-                expression.set("catalog", exp.to_identifier("temp"))
-                expression.set("db", exp.to_identifier("main"))
+                # Preserve DuckDB's internal names when a later Snowflake optimizer normalizes identifiers.
+                expression.set("catalog", exp.to_identifier("temp", quoted=True))
+                expression.set("db", exp.to_identifier("main", quoted=True))
         return expression
 
     def validate(self, expression: Expr, in_transaction: bool) -> None:
