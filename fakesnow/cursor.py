@@ -445,8 +445,16 @@ class FakeSnowflakeCursor:
         return names or None
 
     def _transform(self, expression: Expr, params: MutableParams | None) -> Expr:
-        expression = expression.transform(lambda e: transforms.identifier(e, params), copy=False).transform(
-            transforms.upper_case_unquoted_identifiers, copy=False
+        expression = (
+            expression.transform(lambda e: transforms.identifier(e, params), copy=False)
+            .transform(transforms.upper_case_unquoted_identifiers, copy=False)
+            .transform(
+                self._conn.temporary_tables.transform,
+                current_database=self._conn.database,
+                current_schema=self._conn.schema,
+                in_transaction=self._conn._in_transaction,
+                copy=False,
+            )
         )
         self._unchecked_case = None
         try:
@@ -649,11 +657,7 @@ class FakeSnowflakeCursor:
                 self._duck_conn.begin()
                 self._conn._in_transaction = True
 
-            # In transaction book keeping
-            elif isinstance(transformed, exp.Transaction):
-                self._conn._in_transaction = True
-            elif isinstance(transformed, (exp.Commit, exp.Rollback)):
-                self._conn._in_transaction = False
+        self._conn.temporary_tables.validate(transformed, self._conn._in_transaction)
 
         column_updates = info_schema.column_metadata_updates(
             self._duck_conn, transformed, self._conn.database, self._conn.schema
@@ -727,7 +731,15 @@ class FakeSnowflakeCursor:
             msg = cast(str, e.args[0]).split("\n")[0]
             raise snowflake.connector.errors.ProgrammingError(msg=msg, errno=100035, sqlstate="22007") from e
 
-        self._conn.table_stages.record_temporary_table(transformed, self._conn.database, self._conn.schema)
+        # In transaction book keeping, including BEGIN in autocommit mode, whose transaction stays open if autocommit
+        # is then turned off. Only once the statement succeeds: a failed BEGIN opens no transaction, and a failed
+        # COMMIT or ROLLBACK leaves it open.
+        if isinstance(transformed, exp.Transaction):
+            self._conn._in_transaction = True
+        elif isinstance(transformed, (exp.Commit, exp.Rollback)):
+            self._conn._in_transaction = False
+
+        self._conn.temporary_tables.record(transformed)
 
         if set_database := transformed.args.get("set_database"):
             self._conn.database = set_database
