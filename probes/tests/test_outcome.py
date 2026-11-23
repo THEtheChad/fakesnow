@@ -7,7 +7,7 @@ import duckdb
 import pytest
 import snowflake.connector.errors
 
-from probes.outcome import Column, ErrorInfo, Outcome, ResultSet, Step, decode, encode, scrub_value, scrubber
+from probes.outcome import Column, ErrorInfo, Outcome, ResultSet, Step, decode, encode, redact, scrub_value, scrubber
 
 
 def test_error_info_from_a_connector_error():
@@ -88,6 +88,25 @@ def test_nested_resultset_names_are_scrubbed():
     assert scrub_value({"result": value}, scrubber({"PROBES_ABC": "{schema}"})) == {
         "result": ResultSet((Column("{schema}", 2),), (("{schema}",),))
     }
+
+
+# each as connector 4's SecretDetector masked it
+@pytest.mark.parametrize(
+    ("text", "redacted"),
+    [
+        (
+            "-----BEGIN RSA PRIVATE KEY-----\nMIIEabc\n-----END RSA PRIVATE KEY-----",
+            "-----BEGIN PRIVATE KEY-----\\nXXXX\\n-----END PRIVATE KEY-----",
+        ),
+        ("login failed: token=ver:1-hint:1233-realToken", "login failed: token=****"),
+        ("password=hunter2hunter2", "password=****"),
+        ('{"access_token": "abc.def"}', '{"access_token":"XXXX"}'),
+        ("Object 'T' does not exist", "Object 'T' does not exist"),
+    ],
+    ids=["private-key", "token", "password", "access-token-json", "no-secret"],
+)
+def test_diagnostics_mask_secrets_the_connector_recognises(text: str, redacted: str):
+    assert redact(text) == redacted
 
 
 def test_exception_diagnostics_redact_configured_secrets(monkeypatch: pytest.MonkeyPatch):
