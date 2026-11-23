@@ -9,8 +9,8 @@
     "fakesnow": "9572801a6df18eb48c0f9868c780164097d3de3d9eaa78fd0a8ffb7e108a3690"
   },
   "connector.fetch-pandas-all": {
-    "fakesnow": "751ee157c3f90ce3e6e864b7dbd393768d5146073f0d6016c96a8509a87393b1",
-    "fakesnow-server": "751ee157c3f90ce3e6e864b7dbd393768d5146073f0d6016c96a8509a87393b1"
+    "fakesnow": "8cdb0ef058de1eae6ff671607f2ad9e3bf9098bcac03be547d14bb76a24a7366",
+    "fakesnow-server": "8cdb0ef058de1eae6ff671607f2ad9e3bf9098bcac03be547d14bb76a24a7366"
   },
   "connector.last-query-id": {
     "fakesnow": "01e1ec925238692413b20cc267410f9818583349f2f8eeff760a8183dd33c0a6",
@@ -38,11 +38,7 @@
   },
   "ddl.file-format-apostrophe": {
     "fakesnow": "470a682efdcdb32b5c2fb89d931e0ec0aeccf325cb55b565508d96ce5e0007e3",
-    "fakesnow-server": "52e1cc7ab8e9f37d4b901277fed851abe6e1b06699937089e416daec19bbf228"
-  },
-  "ddl.information-schema-tables": {
-    "fakesnow": "26b8f20a075e5031c80027f3d5d8a04fd59c21d279ae393d47abc7f39b4c273c",
-    "fakesnow-server": "26b8f20a075e5031c80027f3d5d8a04fd59c21d279ae393d47abc7f39b4c273c"
+    "fakesnow-server": "bb3974f5a426169721c8099deec204563445ba45f2b9415e6132117bb322b8da"
   },
   "ddl.information-schema-views": {
     "fakesnow": "79dece34d781fa2496faed7c30b6e54676424d8e953964a4b418eb09d09d1431",
@@ -118,7 +114,7 @@
   },
   "errors.not-null-violation": {
     "fakesnow": "e1b9f7685dd6f52a70669e9669fa6876ab5927467c039cea8d6ac58550a7bc30",
-    "fakesnow-server": "cf22c3c9a0d5de6219a3776a95b9218cf429e161cc81581505e02520643092e3"
+    "fakesnow-server": "d167cb60cf5a6aca7de1025343f88663c95f9725fcea765844c1b4f112d17b27"
   },
   "errors.unknown-function": {
     "fakesnow": "5d3f8508e370eb39deba9c539f869b1eff6361cd839ae5b65f565b187c0c58ff",
@@ -194,14 +190,6 @@
   "keywords.glob.table": {
     "fakesnow": "ea9e02f868983151d4145acdf79499d8bf75be494d3e21d6cf06ef1cbdf61bae",
     "fakesnow-server": "ea9e02f868983151d4145acdf79499d8bf75be494d3e21d6cf06ef1cbdf61bae"
-  },
-  "keywords.install.column": {
-    "fakesnow": "77ee834626d283ab94127e2e9e5da7d59ed7ae005b4acc2baf163a8b86fea0bc",
-    "fakesnow-server": "a14162abb1438e35e9ea20f718db21b199b64281fb1f1db441796f6a4f8b74d8"
-  },
-  "keywords.install.table": {
-    "fakesnow": "424af8ffacfe9141696bf3fae85cecaa2c9d72fdc7ead405d2a77194e9d77bc4",
-    "fakesnow-server": "1ec64ca42370027ea1b93305cd3c3b106b415f42a8ef9573af5d381038c1e59d"
   },
   "keywords.lateral.column": {
     "fakesnow": "f098270d45d5ba022e84c4d9e484842587287e1476d677428e31e149886e5303",
@@ -287,7 +275,7 @@
   },
   "semis.array-construct-aliased": {
     "fakesnow": "2b52400a6f4e7a1b20bc3a933fbeb20faa061c533ab11e385d5b1188ff8a2961",
-    "fakesnow-server": "7206390c1298b1dc2bfbde3203583cb4c65dd0d71336d7c044977553b70710bd"
+    "fakesnow-server": "80a679726eb9ba8877c201708c3f5aafd6569a07170c2acabdf2ee1fd6395344"
   },
   "semis.array-construct-unaliased": {
     "fakesnow": "b8223b9cf81247f1bceca66f6979d32dda8154d001e7780e8a109958eb1bc80d",
@@ -295,11 +283,11 @@
   },
   "semis.array-slice-direct": {
     "fakesnow": "272643c1fbd83ac9c994bc4e0f6c4b0f9954b3597eda91b471a29981447100ff",
-    "fakesnow-server": "bcc117255d9c2b9c74888635226c5d92bc0f56094a0a9bc2db6eb9c604c58a76"
+    "fakesnow-server": "ac73cd2c480272639fedcd10f612893633956a18fc6c930d21a2e9a312eaebe7"
   },
   "semis.array-slice-of-compact": {
     "fakesnow": "c5cb4988e8d91d153a70aa066497a1af432979ffdbd5dada1a0d9be08b7dbc94",
-    "fakesnow-server": "366f1720e5247c0e37d0e0a8b6dbcc6172d07bdf2a9b0a83312f0119597f9940"
+    "fakesnow-server": "3d1501407bce940f1193f8a357650850bbaa4a4a705ddc0e9e52f8f043042b0e"
   },
   "semis.constructed-type-codes": {
     "fakesnow": "a8d155450d2031d211d347d77eb6729602718dae6aa9cd4ad983a6429d361fc3",
@@ -315,11 +303,11 @@
   },
   "semis.object-keys": {
     "fakesnow": "620d7b36e74e6af84c8303ddd7ae6206227597c553d5818ef3a3ff1d21f6bf00",
-    "fakesnow-server": "525b1f647f1a45298225f6299128e55cc422d9d698d782820aef2087a5d2061c"
+    "fakesnow-server": "28fe41e715c0983ffdba2590f5ebda562830efde38d959823a73b5bf3d2b3b15"
   },
   "semis.parse-json-invalid": {
     "fakesnow": "033149f948f1822a58236a5957d3dd8c1d265d99e5c37ed76baae62d5c9ee514",
-    "fakesnow-server": "3ff726abb4b12ed2fe3e3b7a61aa6897f8b8aa10b5b05adec80137f6784ee97c"
+    "fakesnow-server": "7fdea377bfa9dc3e19b3ac5019048fdaf1ae95eae5a7fcd72a95a0fe5a8d4d95"
   },
   "semis.result-type-codes": {
     "fakesnow": "296a2cb417adb03363850844eaa7a813634793c8dd4414c3cebedc301d6449fb",
@@ -340,9 +328,6 @@
   "stages.drop-missing": {
     "fakesnow": "e3ac177c5ec30cdbb58f05209853cc88e0d25bd83bf985decd870394db2f7a51",
     "fakesnow-server": "e3ac177c5ec30cdbb58f05209853cc88e0d25bd83bf985decd870394db2f7a51"
-  },
-  "stages.put": {
-    "fakesnow": "46580086edcaf499e143032182ea2a857f42e2c12608d2a5f5f319ea6691d175"
   },
   "stages.select-from-stage": {
     "fakesnow": "4690a09a5a94457d8f0af5df42bd4d1a428c69ece0a5ed2a7fb22913486386c8",
@@ -389,7 +374,7 @@
   },
   "transactions.ddl-commits-open-transaction": {
     "fakesnow": "3787c0f8777fad506e78120056ff62d73c8ae3bc326c3aa1038ca56cde424492",
-    "fakesnow-server": "104a485b3fc8497d24ed6dfa9713e9d05d9c575d594a55cacbc9eb196cd3b043"
+    "fakesnow-server": "2fa9b490a19a2ec576eeaf3c13a05be9f71dc494a4601103ef163a397eca5f6b"
   },
   "transactions.runtime-error-mid-transaction": {
     "fakesnow": "2f12d57eed9514ff5e4aa9813d2e36efdb83ca0601051e8b70801141b7d340c5",
