@@ -173,7 +173,7 @@ class TemporaryTables:
             return {}
         sql = "SELECT table_name, table_oid FROM duckdb_tables() WHERE temporary"
         live = self._duck_conn.execute(sql).fetchall()
-        return {name: self._temporary[oid] for name, oid in live if oid in self._temporary}
+        return {name: self._temporary[oid][:2] for name, oid in live if oid in self._temporary}
 
     def oid(self, catalog: str | None, schema: str, name: str) -> int | None:
         if not self._temporary:
