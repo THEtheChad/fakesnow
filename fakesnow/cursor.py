@@ -324,6 +324,9 @@ class FakeSnowflakeCursor:
         except NotImplementedError as e:
             msg = f"{e} not implemented. Please raise an issue via https://github.com/tekumara/fakesnow/issues/new"
             raise snowflake.connector.errors.ProgrammingError(msg=msg, errno=9999, sqlstate="99999") from e
+        finally:
+            # a statement that failed before _execute took it doesn't leave its check behind
+            self._unchecked_case = None
 
     def execute_async(
         self,

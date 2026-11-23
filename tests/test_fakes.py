@@ -1539,6 +1539,8 @@ def test_ddl_after_a_runtime_error_checks_table_case(
     assert "002003 (42S02): SQL compilation error:\nObject 'CUSTOMERS' does not exist or not authorized." in str(
         excinfo.value
     )
+    cur.execute("select count(*) from information_schema.tables where table_name = 'COPIED'")
+    assert cur.fetchall() == [(0,)]
 
 
 def test_ddl_after_a_runtime_error_runs(
