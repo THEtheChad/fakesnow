@@ -17,8 +17,8 @@
     "fakesnow-server": "01e1ec925238692413b20cc267410f9818583349f2f8eeff760a8183dd33c0a6"
   },
   "ddl.create-database-public-schema": {
-    "fakesnow": "1ce002655dd38937d297bea7d9333880d15793f1faa901c3704b7f5752c9e260",
-    "fakesnow-server": "1ce002655dd38937d297bea7d9333880d15793f1faa901c3704b7f5752c9e260"
+    "fakesnow": "02a9817421f7cbbf5dc216ce11a29db7a739744021076dd459ce4d06d19438c2",
+    "fakesnow-server": "02a9817421f7cbbf5dc216ce11a29db7a739744021076dd459ce4d06d19438c2"
   },
   "ddl.create-existing-table-status": {
     "fakesnow": "35b19c1a76fc9ac721b07101939d4e176325cf4b8689ffa6174695d57d902e68",
@@ -49,24 +49,24 @@
     "fakesnow-server": "906cc0a8419ba149c3385a8286af8f312ff43c8193729364bee970f941e5f1e1"
   },
   "ddl.show-columns": {
-    "fakesnow": "cb8e0cf2523fc0142697e3fde887680c501cc65a396a69bc78b6070995c60d9f",
-    "fakesnow-server": "cb8e0cf2523fc0142697e3fde887680c501cc65a396a69bc78b6070995c60d9f"
+    "fakesnow": "3055469e492de8096c452d9003ba322b933e7f6ac3555992e255de333c4c2b85",
+    "fakesnow-server": "3055469e492de8096c452d9003ba322b933e7f6ac3555992e255de333c4c2b85"
   },
   "ddl.show-databases": {
-    "fakesnow": "2595de52bc7d2e28e74e3bcfd3bf8fd57d7277f0f8ade777cfe11591f898148a",
-    "fakesnow-server": "2595de52bc7d2e28e74e3bcfd3bf8fd57d7277f0f8ade777cfe11591f898148a"
+    "fakesnow": "9fa045a3be935483f0fa49ddc199eeb74e12b306a334d8d01ff62e2d9a1375b2",
+    "fakesnow-server": "9fa045a3be935483f0fa49ddc199eeb74e12b306a334d8d01ff62e2d9a1375b2"
   },
   "ddl.show-schemas": {
-    "fakesnow": "77694acd16c68899831437dc5fe078bc5ac24f2835c4d790e18160ae9cfe53d9",
-    "fakesnow-server": "77694acd16c68899831437dc5fe078bc5ac24f2835c4d790e18160ae9cfe53d9"
+    "fakesnow": "88733237e62fdc83215de58c13138b33b438b7a76595ede2575d39458ef56cb7",
+    "fakesnow-server": "88733237e62fdc83215de58c13138b33b438b7a76595ede2575d39458ef56cb7"
   },
   "ddl.show-tables": {
-    "fakesnow": "fb12a6005366852fe5bb6fa70da5a22308d5208f86ea0cede9da067b459a04a2",
-    "fakesnow-server": "fb12a6005366852fe5bb6fa70da5a22308d5208f86ea0cede9da067b459a04a2"
+    "fakesnow": "0f400e8fb38f51d6d33b4078c7cf8e5b1062c5e3851902d800b66602ad676dde",
+    "fakesnow-server": "0f400e8fb38f51d6d33b4078c7cf8e5b1062c5e3851902d800b66602ad676dde"
   },
   "ddl.show-tables-columns": {
-    "fakesnow": "1ba8cab490a5d9b7e00f4b75f5eb8135d526659634104b6b37b0b74ffbd5da4a",
-    "fakesnow-server": "1ba8cab490a5d9b7e00f4b75f5eb8135d526659634104b6b37b0b74ffbd5da4a"
+    "fakesnow": "b96d2558156555bb8dffcb2e6f9083e44be610e97ce1b27b729e42c04b25a459",
+    "fakesnow-server": "b96d2558156555bb8dffcb2e6f9083e44be610e97ce1b27b729e42c04b25a459"
   },
   "ddl.temporary-table-after-use-schema": {
     "fakesnow": "6f879cd8a7c744200b32709da4d8096e9e8382a4a0fe6e127847f546900110df",
@@ -330,8 +330,8 @@
     "fakesnow-server": "e3ac177c5ec30cdbb58f05209853cc88e0d25bd83bf985decd870394db2f7a51"
   },
   "stages.select-from-stage": {
-    "fakesnow": "4690a09a5a94457d8f0af5df42bd4d1a428c69ece0a5ed2a7fb22913486386c8",
-    "fakesnow-server": "4690a09a5a94457d8f0af5df42bd4d1a428c69ece0a5ed2a7fb22913486386c8"
+    "fakesnow": "123c722f201a4ab759d0c49e7b9f3a5194509fed42df30a8d92e3dac32724d50",
+    "fakesnow-server": "123c722f201a4ab759d0c49e7b9f3a5194509fed42df30a8d92e3dac32724d50"
   },
   "timestamps.date-to-varchar-default": {
     "fakesnow": "11ddafab9a614f6630dce48ec829a74c2fa4a7fd97f2737262fc69dfc82de501",
