@@ -1140,3 +1140,13 @@ def test_server_temporary_table_drop_schema_other_session(server: dict, statemen
         with pytest.raises(snowflake.connector.errors.ProgrammingError, match="does not exist") as excinfo:
             cur1.execute(f"select * from {database}.S.T")
         assert excinfo.value.errno == 2003
+
+
+def test_server_unquoted_names_reserved_by_duckdb(scur: snowflake.connector.cursor.SnowflakeCursor) -> None:
+    # DuckDB reserves these words, Snowflake doesn't
+    scur.execute("create table pivot (semi int)")
+    scur.execute("insert into pivot values (1)")
+    scur.execute("select semi from pivot")
+    assert scur.fetchall() == [(1,)]
+    assert scur.description
+    assert [c.name for c in scur.description] == ["SEMI"]
