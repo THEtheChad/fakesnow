@@ -1150,3 +1150,20 @@ def test_server_unquoted_names_reserved_by_duckdb(scur: snowflake.connector.curs
     assert scur.fetchall() == [(1,)]
     assert scur.description
     assert [c.name for c in scur.description] == ["SEMI"]
+
+
+def test_server_temporary_table_keeps_permanent_varchar_length(server: dict) -> None:
+    # Another session's temporary table must not change the length a permanent table enforces.
+    shared = server | {"session_parameters": {}}
+    database = f"TEMP_LENGTH_{uuid.uuid4().hex.upper()}"
+    with (
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn1,
+        snowflake.connector.connect(**shared, database=database, schema="S") as conn2,
+        conn1.cursor() as cur1,
+        conn2.cursor() as cur2,
+    ):
+        cur1.execute("create table example (name varchar(10))")
+        cur1.execute("create temporary table example (name varchar(2))")
+        cur2.execute("insert into example values ('abcde')")
+        cur2.execute("select name from example")
+        assert cur2.fetchall() == [("abcde",)]

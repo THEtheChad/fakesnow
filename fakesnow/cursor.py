@@ -606,7 +606,13 @@ class FakeSnowflakeCursor:
             )
             .transform(lambda e: transforms.create_table_as(e, self._duck_conn), copy=False)
             .transform(
-                lambda e: transforms.enforce_text_length(e, self._duck_conn, self._conn.database, self._conn.schema),
+                lambda e: transforms.enforce_text_length(
+                    e,
+                    self._duck_conn,
+                    self._conn.database,
+                    self._conn.schema,
+                    self._conn.temporary_tables.location,
+                ),
                 copy=False,
             )
             .transform(
@@ -715,7 +721,11 @@ class FakeSnowflakeCursor:
         self._conn.temporary_tables.validate(transformed, self._conn._in_transaction)
 
         column_updates = info_schema.column_metadata_updates(
-            self._duck_conn, transformed, self._conn.database, self._conn.schema
+            self._duck_conn,
+            transformed,
+            self._conn.database,
+            self._conn.schema,
+            lambda table: self._conn.temporary_tables.location(table, self._conn.database, self._conn.schema),
         )
         affected_count = None
         result: pyarrow.Table | None = None
