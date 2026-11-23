@@ -1,7 +1,7 @@
 """Scalar types: NUMBER precision and scale and how values come back to Python, VARCHAR(n), BOOLEAN, BINARY."""
 
 from probes import Case, Compare, Expected
-from probes.cases._gaps import DECIMAL_NOT_INT, ERROR_CODES, FLOAT_NUMBERS, SUM_FLOAT
+from probes.cases._gaps import DECIMAL_NOT_INT, ERROR_CODES, FLOAT_NUMBERS, SERVER_ERROR_PREFIX, SUM_FLOAT
 
 SCALE = Compare(scale=True)
 NUMBERS = [
@@ -18,6 +18,7 @@ CASES = [
         compare=Compare(error_message=True),
         setup=["create or replace table types_vc (v varchar(5))"],
         sql="insert into types_vc values ('abcdef')",
+        expected=SERVER_ERROR_PREFIX,
     ),
     Case(
         id="types.varchar-update-over-long",
@@ -26,6 +27,7 @@ CASES = [
         compare=Compare(error_message=True),
         setup=["create or replace table types_vc2 (v varchar(5))", "insert into types_vc2 values ('abc')"],
         sql="update types_vc2 set v = 'abcdefg'",
+        expected=SERVER_ERROR_PREFIX,
     ),
     Case(
         id="types.varchar-sized-cast",
@@ -33,6 +35,7 @@ CASES = [
         refs=["#473"],
         compare=Compare(error_message=True),
         sql="select 'abcdef'::varchar(5)",
+        expected=SERVER_ERROR_PREFIX,
     ),
     Case(
         id="types.varchar-try-cast-sized",

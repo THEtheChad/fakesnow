@@ -2,6 +2,12 @@
 
 from probes import Expected
 
+SERVER_ERROR_PREFIX = Expected(
+    ["#507"],
+    "with connector 5, fakesnow-server's error message already starts with the errno and SQLSTATE, which the "
+    "connector adds again: 100078 (22000): 100078 (22000): ...",
+    targets=["fakesnow-server"],
+)
 ERROR_CODES = Expected(
     ["#483"],
     "fakesnow maps DuckDB errors by class (Binder 2043 (02000), Catalog 2003 (42S02), Conversion 100035 (22007)), "

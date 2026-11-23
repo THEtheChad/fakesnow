@@ -123,11 +123,12 @@ CASES = [
     Case(
         id="transactions.runtime-error-mid-transaction",
         description="A runtime error inside a transaction: Snowflake commits the other writes",
-        refs=["#459", "#470"],
+        refs=["#459", "#470", "#499"],
         run=runtime_error_mid_transaction,
         expected=Expected(
-            ["#470"],
-            "DuckDB aborts the transaction on a runtime error, so fakesnow refuses later statements and the commit",
+            ["#499"],
+            "DuckDB aborts the transaction on a runtime error, so fakesnow refuses later statements, and the COMMIT "
+            "keeps none of the transaction's writes",
         ),
     ),
     Case(

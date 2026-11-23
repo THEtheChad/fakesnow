@@ -377,8 +377,8 @@
     "fakesnow-server": "2fa9b490a19a2ec576eeaf3c13a05be9f71dc494a4601103ef163a397eca5f6b"
   },
   "transactions.runtime-error-mid-transaction": {
-    "fakesnow": "2f12d57eed9514ff5e4aa9813d2e36efdb83ca0601051e8b70801141b7d340c5",
-    "fakesnow-server": "feef9e0aa7ec6445935721100459cfe5c99e5c114e1226815cc8c61fc2df8bde"
+    "fakesnow": "2e60a46887c997c7ef4402431b6144fe4f9c385e07ffe8b0583501efc95296b0",
+    "fakesnow-server": "40187ece065b4d5a8fe9bdf56f6f19ec5ef0342cb2eae0fc41e39922f09dd775"
   },
   "types.binary-values": {
     "fakesnow": "3208c22489c7744cb94ce661ade978c879200a2faa3324016d12c0bafdc86c53"
@@ -437,9 +437,18 @@
     "fakesnow": "5b39715f0302b4386a2f72fbaf2f01c0edf763b6302148ba11721ca438e13a11",
     "fakesnow-server": "5b39715f0302b4386a2f72fbaf2f01c0edf763b6302148ba11721ca438e13a11"
   },
+  "types.varchar-insert-over-long": {
+    "fakesnow-server": "511c57c6a9ee710489c90aa20e5e18b8f838f54c1924406e1c8336eb3fd844bc"
+  },
   "types.varchar-length-metadata": {
     "fakesnow": "38324c172659aca4faa60cacca64fc3f3e92802787e383019969a772c14055f3",
     "fakesnow-server": "38324c172659aca4faa60cacca64fc3f3e92802787e383019969a772c14055f3"
+  },
+  "types.varchar-sized-cast": {
+    "fakesnow-server": "da976d30acb4c64bb777342a54cab5d1924345e89a6ac88e7507a9a64ff6cba3"
+  },
+  "types.varchar-update-over-long": {
+    "fakesnow-server": "fd05eea6fbb1b86363d270c87f00691f9cde06346b40e2d4cd4a670d4a2d3d3a"
   },
   "write-pandas.auto-create-types": {
     "fakesnow-server": "61acddb308af1b7358f50ed12fd6b4158da7c5a85f573f42f20f37360a94a6fd"
